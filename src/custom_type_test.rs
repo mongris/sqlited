@@ -2,13 +2,12 @@
 mod tests {
     use std::collections::HashMap;
 
-    use rusqlite::{types::{FromSql, ValueRef}, ToSql, Result as SqliteResult};
     use serde::{Deserialize, Serialize};
     use crate::{
         connection::{SqliteConnection, new_memory_pool, get_connection},
         table,
         sql,
-        bindable_value
+        sqld
     };
 
     // 定义枚举
@@ -20,8 +19,8 @@ mod tests {
     }
 
     // 使用宏生成序列化类型
-    bindable_value!(
-        enum SerializedAxis(Axis) {
+    sqld!(
+        enum Axis {
             Horizontal => "Horizontal",
             Vertical => "Vertical",
         }
@@ -39,7 +38,7 @@ mod tests {
     }
 
     // 使用二进制序列化
-    bindable_value!(binary BinaryLayout(Layout));
+    sqld!(binary Layout);
 
     // 定义复杂结构体，用于 JSON 序列化
     #[derive(Default, Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -50,7 +49,7 @@ mod tests {
     }
 
     // 使用 JSON 序列化
-    bindable_value!(json JsonConfig(Config));
+    sqld!(json Config);
 
     // 定义测试表
     table! {
@@ -58,9 +57,9 @@ mod tests {
             #[autoincrement]
             id: i32,
             name: String,
-            axis: SerializedAxis,
-            layout: BinaryLayout,
-            config: JsonConfig
+            axis: Axis,
+            layout: Layout,
+            config: Config
         }
     }
 
@@ -70,7 +69,7 @@ mod tests {
             #[autoincrement]
             id: i32,
             name: String, 
-            axis: SerializedAxis
+            axis: Axis
         }
     }
 
@@ -91,7 +90,7 @@ mod tests {
             INSERT INTO testcustom (name, axis) VALUES (?, ?),
             TestCustom {
                 name: "水平测试".to_string(),
-                axis: SerializedAxis(Axis::Vertical),
+                axis: Axis::Vertical,
             }
         );
         
@@ -102,21 +101,21 @@ mod tests {
         let (data_name, data_axis) = &conn.query(
             "SELECT name, axis FROM testcustom WHERE id = 1", 
             [], 
-            |row| Ok((row.get::<_, String>(0)?, row.get::<_, SerializedAxis>(1)?))
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, Axis>(1)?))
         ).unwrap()[0];
         
         assert_eq!(data_name, "水平测试");
-        assert_eq!(*data_axis, SerializedAxis(Axis::Vertical));
+        assert_eq!(*data_axis, Axis::Vertical);
     }
 
     #[test]
-    fn test_bindable_value_types() {
+    fn test_bindable_types() {
         // 创建连接和表
         let conn = create_test_connection();
         conn.execute(CustomTypes::create_table_sql().as_str(), []).unwrap();
         
         // 创建测试数据
-        let axis = SerializedAxis(Axis::Vertical);
+        let axis = Axis::Vertical;
         
         let layout = Layout {
             x: 100,
@@ -143,8 +142,8 @@ mod tests {
             CustomTypes {
                 name: "混合类型测试".to_string(),
                 axis,
-                layout: BinaryLayout(layout.clone()),
-                config: JsonConfig(config.clone()),
+                layout: layout.clone(),
+                config: config.clone(),
             }
         );
         
@@ -157,9 +156,9 @@ mod tests {
             [], 
             |row| Ok((
                 row.get::<_, String>(0)?,
-                row.get::<_, SerializedAxis>(1)?,
-                row.get::<_, BinaryLayout>(2)?,
-                row.get::<_, JsonConfig>(3)?
+                row.get::<_, Axis>(1)?,
+                row.get::<_, Layout>(2)?,
+                row.get::<_, Config>(3)?
             ))
         ).unwrap();
         
@@ -168,7 +167,7 @@ mod tests {
         // 验证各字段
         assert_eq!(data.0, "混合类型测试");
         assert_eq!(data.1, axis);
-        assert_eq!(data.2.0, layout);
-        assert_eq!(data.3.0, config);
+        assert_eq!(data.2, layout);
+        assert_eq!(data.3, config);
     }
 }

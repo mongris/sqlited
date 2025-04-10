@@ -1,8 +1,8 @@
 use std::ops::{Deref, DerefMut};
 
-use chrono::{DateTime, NaiveDateTime, Utc};
-use rusqlite::types::{FromSql, FromSqlError, ToSql, ToSqlOutput, ValueRef};
-use crate::{bindable_value, SqliteBindableValue, SqliteTypeName};
+use chrono::{DateTime, Utc};
+use rusqlite::types::{FromSql, FromSqlError, ToSqlOutput, ValueRef};
+use crate::{SqliteBindableValue, SqliteTypeName};
 
 // New wrapper type for DateTime<Utc>
 #[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]

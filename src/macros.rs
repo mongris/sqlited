@@ -582,19 +582,16 @@ impl SqliteTypeName for bool {
 }
 
 #[macro_export]
-macro_rules! bindable_value {
+macro_rules! sqld {
     // 枚举类型的文本序列化
     (
-        enum $wrapper:ident($enum_type:ident) {
+        enum $enum_type:ident {
             $($variant:ident => $value:expr),+ $(,)?
         }
     ) => {
-        #[derive(Default, Copy, Clone, Debug, PartialEq)]
-        pub struct $wrapper(pub $enum_type);
-
-        impl $crate::SqliteBindableValue for $wrapper {
+        impl $crate::SqliteBindableValue for $enum_type {
             fn to_sql_value(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
-                let value = match self.0 {
+                let value = match self {
                     $(
                         $enum_type::$variant => $value,
                     )+
@@ -607,7 +604,7 @@ macro_rules! bindable_value {
                 String::column_result(value).and_then(|s| {
                     match s.as_str() {
                         $(
-                            $value => Ok($wrapper($enum_type::$variant)),
+                            $value => Ok($enum_type::$variant),
                         )+
                         _ => Err(rusqlite::types::FromSqlError::InvalidType),
                     }
@@ -616,21 +613,21 @@ macro_rules! bindable_value {
         }
 
         // 直接实现 ToSql 特征
-        impl rusqlite::ToSql for $wrapper {
+        impl rusqlite::ToSql for $enum_type {
             fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
                 self.to_sql_value()
             }
         }
         
         // 直接实现 FromSql 特征
-        impl rusqlite::types::FromSql for $wrapper {
+        impl rusqlite::types::FromSql for $enum_type {
             fn column_result(value: rusqlite::types::ValueRef<'_>) -> Result<Self, rusqlite::types::FromSqlError> {
                 Self::from_sql_value(value)
             }
         }
         
         // 实现 SqliteTypeName
-        impl $crate::macros::SqliteTypeName for $wrapper {
+        impl $crate::macros::SqliteTypeName for $enum_type {
             fn sql_type_name() -> &'static str {
                 "TEXT"
             }
@@ -639,14 +636,11 @@ macro_rules! bindable_value {
 
     // 二进制序列化 (使用 bincode)
     (
-        binary $wrapper:ident($inner_type:ty)
+        binary $type:ty
     ) => {
-        #[derive(Default, Clone, Debug, PartialEq)]
-        pub struct $wrapper(pub $inner_type);
-
-        impl $crate::SqliteBindableValue for $wrapper {
+        impl $crate::SqliteBindableValue for $type {
             fn to_sql_value(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
-                match bincode::serialize(&self.0) {
+                match bincode::serialize(&self) {
                     Ok(bytes) => Ok(rusqlite::types::ToSqlOutput::from(bytes)),
                     Err(err) => Err(rusqlite::Error::ToSqlConversionFailure(
                         Box::new(err)
@@ -657,8 +651,8 @@ macro_rules! bindable_value {
             fn from_sql_value(value: rusqlite::types::ValueRef<'_>) -> Result<Self, rusqlite::types::FromSqlError> {
                 use rusqlite::types::FromSql;
                 Vec::<u8>::column_result(value).and_then(|bytes| {
-                    match bincode::deserialize::<$inner_type>(&bytes) {
-                        Ok(obj) => Ok($wrapper(obj)),
+                    match bincode::deserialize::<$type>(&bytes) {
+                        Ok(obj) => Ok(obj),
                         Err(err) => Err(rusqlite::types::FromSqlError::Other(
                             Box::new(err)
                         ))
@@ -672,21 +666,21 @@ macro_rules! bindable_value {
         }
         
         // 直接实现 ToSql 特征
-        impl rusqlite::ToSql for $wrapper {
+        impl rusqlite::ToSql for $type {
             fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
                 self.to_sql_value()
             }
         }
         
         // 直接实现 FromSql 特征
-        impl rusqlite::types::FromSql for $wrapper {
+        impl rusqlite::types::FromSql for $type {
             fn column_result(value: rusqlite::types::ValueRef<'_>) -> Result<Self, rusqlite::types::FromSqlError> {
                 Self::from_sql_value(value)
             }
         }
         
         // 实现 SqliteTypeName
-        impl $crate::macros::SqliteTypeName for $wrapper {
+        impl $crate::macros::SqliteTypeName for $type {
             fn sql_type_name() -> &'static str {
                 "BLOB" // 使用 BLOB 类型存储二进制数据
             }
@@ -695,15 +689,12 @@ macro_rules! bindable_value {
     
     // JSON 序列化版本
     (
-        json $wrapper:ident($inner_type:ty)
+        json $type:ty
     ) => {
-        #[derive(Default, Clone, Debug, PartialEq)]
-        pub struct $wrapper(pub $inner_type);
-
-        impl $crate::SqliteBindableValue for $wrapper {
+        impl $crate::SqliteBindableValue for $type {
             fn to_sql_value(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
                 // 使用 serde_json 序列化为字符串
-                match serde_json::to_string(&self.0) {
+                match serde_json::to_string(&self) {
                     Ok(json) => Ok(rusqlite::types::ToSqlOutput::from(json)),
                     Err(err) => Err(rusqlite::Error::ToSqlConversionFailure(
                         Box::new(err)
@@ -714,8 +705,8 @@ macro_rules! bindable_value {
             fn from_sql_value(value: rusqlite::types::ValueRef<'_>) -> Result<Self, rusqlite::types::FromSqlError> {
                 use rusqlite::types::FromSql;
                 String::column_result(value).and_then(|json_str| {
-                    match serde_json::from_str::<$inner_type>(&json_str) {
-                        Ok(obj) => Ok($wrapper(obj)),
+                    match serde_json::from_str::<$type>(&json_str) {
+                        Ok(obj) => Ok(obj),
                         Err(err) => Err(rusqlite::types::FromSqlError::Other(
                             Box::new(err)
                         ))
@@ -725,21 +716,21 @@ macro_rules! bindable_value {
         }
         
         // 直接实现 ToSql 特征
-        impl rusqlite::ToSql for $wrapper {
+        impl rusqlite::ToSql for $type {
             fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
                 self.to_sql_value()
             }
         }
         
         // 直接实现 FromSql 特征
-        impl rusqlite::types::FromSql for $wrapper {
+        impl rusqlite::types::FromSql for $type {
             fn column_result(value: rusqlite::types::ValueRef<'_>) -> Result<Self, rusqlite::types::FromSqlError> {
                 Self::from_sql_value(value)
             }
         }
         
         // 实现 SqliteTypeName
-        impl $crate::macros::SqliteTypeName for $wrapper {
+        impl $crate::macros::SqliteTypeName for $type {
             fn sql_type_name() -> &'static str {
                 "TEXT"
             }
