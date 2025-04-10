@@ -6,18 +6,21 @@ use crate::{bindable_value, SqliteBindableValue, SqliteTypeName};
 
 // New wrapper type for DateTime<Utc>
 #[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[repr(transparent)]
 pub struct Timestamp(pub DateTime<Utc>);
 
 // Implement Deref to make Timestamp behave like DateTime<Utc>
 impl Deref for Timestamp {
     type Target = DateTime<Utc>;
     
+    #[inline(always)]
     fn deref(&self) -> &Self::Target {
         &self.0
     }
 }
 
 impl DerefMut for Timestamp {
+    #[inline(always)]
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
     }

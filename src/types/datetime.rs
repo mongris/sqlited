@@ -1,23 +1,26 @@
 use std::ops::{Deref, DerefMut};
 
 use chrono::{DateTime, NaiveDateTime, Utc};
-use rusqlite::types::{FromSql, FromSqlError, ToSql, ToSqlOutput, ValueRef};
-use crate::{bindable_value, SqliteBindableValue, SqliteTypeName};
+use rusqlite::types::{FromSql, FromSqlError, ToSqlOutput, ValueRef};
+use crate::{SqliteBindableValue, SqliteTypeName};
 
 // New wrapper type for DateTime<Utc>
 #[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[repr(transparent)]
 pub struct UtcDateTime(pub DateTime<Utc>);
 
 // Implement Deref to make UtcDateTime behave like DateTime<Utc>
 impl Deref for UtcDateTime {
     type Target = DateTime<Utc>;
     
+    #[inline(always)]
     fn deref(&self) -> &Self::Target {
         &self.0
     }
 }
 
 impl DerefMut for UtcDateTime {
+    #[inline(always)]
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
     }
