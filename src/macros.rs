@@ -72,6 +72,43 @@ macro_rules! count_columns {
     ($col:ident, $($rest:ident),*) => { 1 + $crate::count_columns!($($rest),*) };
 }
 
+/// Helper macro to process default values, particularly for datetime fields
+#[macro_export]
+macro_rules! process_default_value {
+    ($value:expr, $type_name:expr) => {{
+        match $type_name {
+            "sqlited::types::datetime::UtcDateTime" => {
+                match $value {
+                    "now" => {
+                        // Handle datetime('now') for TEXT fields
+                        concat!(" DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))")
+                    }
+                    _ => {
+                        // Handle other default values
+                        concat!(" DEFAULT (", $value, ")")
+                    }
+                }
+            }
+            "sqlited::types::timestamp::Timestamp" => {
+                match $value {
+                    "now" => {
+                        // Handle 'now' for TEXT fields
+                        concat!(" DEFAULT (strftime('%s', 'now'))")
+                    }
+                    _ => {
+                        // Handle other default values
+                        concat!(" DEFAULT (", $value, ")")
+                    }
+                }
+            }
+            _ => {
+                // For other types, use the default value as is
+                concat!(" DEFAULT ", $value)
+            }
+        }
+    }};
+}
+
 /// Macro for creating SQLite tables
 #[macro_export]
 macro_rules! table {
@@ -112,7 +149,7 @@ macro_rules! table {
                     sql.push_str(&format!("    {} {}{}",
                                           stringify!($column).to_lowercase(),
                                           <$type>::sql_type_name(),
-                                          $(concat!(" DEFAULT ", $default_value))?
+                                          $(process_default_value!($default_value, std::any::type_name::<$type>()))?
                                           ));
                     sql.push_str(",\n");
                 )*
@@ -285,7 +322,7 @@ macro_rules! table {
 
                     // 可选的默认值
                     $(
-                        sql.push_str(&format!(" DEFAULT {}", $default_value));
+                        sql.push_str(&$crate::process_default_value!($default_value, std::any::type_name::<$type>()));
                     )?
 
                     sql.push_str(",\n");

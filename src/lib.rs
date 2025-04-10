@@ -20,6 +20,8 @@ pub mod migrations;
 pub mod pool;
 pub mod savepoint;
 
+mod types;
+
 #[cfg(test)]
 mod macros_test;
 #[cfg(test)]
@@ -34,6 +36,7 @@ pub mod prelude {
         SqlQuery, SqliteTypeName, SqliteBindableValue, SqliteCustomType, StaticParamsExt, StaticParamsHolder, WithoutId,
         WithoutIdTableInfo,
     };
+    pub use crate::types::*;
     pub use rusqlite::ToSql;
 }
 

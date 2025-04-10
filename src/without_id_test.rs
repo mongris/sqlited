@@ -12,6 +12,7 @@ mod tests {
         migrations::{Migration, Migrator},
         WithoutId,
         SqliteTypeName,
+        UtcDateTime
     };
 
     // 定义一个用于测试的用户模型
@@ -21,8 +22,10 @@ mod tests {
         name: String,
         age: i32,
         email: Option<String>,
-        #[default("(datetime('now'))")]
-        created_at: String,
+        #[default("now")]
+        created_at: UtcDateTime,
+        #[default("now")]
+        created_at_timestamp: Timestamp,
         #[default("1")]
         active: bool,
     });
@@ -148,8 +151,6 @@ mod tests {
         });
 
         let query = User::insert_with(&["name", "age", "email"]);
-
-        eprint!("sql: {} paramscount: {}", query, user_data.len());
          
         conn.execute(
             &query,
@@ -160,14 +161,17 @@ mod tests {
         let user_id: i32 = raw_conn.last_insert_rowid() as i32;
         
         // 读取用户 - SELECT
-        let user_query = format!("SELECT id, name, age, email, created_at, active FROM user WHERE id = {}", user_id);
+        let user_query = format!("SELECT id, name, age, email, created_at, created_at_timestamp, active FROM user WHERE id = {}", user_id);
         let user_data = &conn.query(&user_query, [], 
-            |row| Ok((row.get::<_, i32>(0)?, row.get::<_, String>(1)?, row.get::<_, i32>(2)?, row.get::<_, Option<String>>(3)?, row.get::<_, String>(4)?, row.get::<_, bool>(5)?))
+            |row| Ok((row.get::<_, i32>(0)?, row.get::<_, String>(1)?, row.get::<_, i32>(2)?, row.get::<_, Option<String>>(3)?, row.get::<_, UtcDateTime>(4)?, row.get::<_, Timestamp>(5)?, row.get::<_, bool>(6)?))
         ).unwrap()[0];
 
-        eprint!("User data: {:?}", user_data);
+        eprintln!("User data: {:?}", user_data);
         
-        let (db_user_id, name, age, email, created_at, active) = user_data;
+        let (db_user_id, name, age, email, created_at, created_at_timestamp, active) = user_data;
+
+        eprintln!("created at {:?}", created_at);
+        eprintln!("created at timestamp {:?}", created_at_timestamp);
         
         assert_eq!(*db_user_id, user_id);
         assert_eq!(name, "Alex Johnson");
