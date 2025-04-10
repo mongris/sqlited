@@ -18,7 +18,7 @@ Add the following dependency to your Cargo.toml:
 
 ```toml
 [dependencies]
-sqlited = "https://github.com/mognris/sqlited.git"
+sqlited = { git = "https://github.com/mongris/sqlited.git" }
 ```
 
 ### Basic Usage
