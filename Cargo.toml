@@ -7,10 +7,10 @@ description = "SQLite macros implementation"
 
 [dependencies]
 log = "0.4"
-rusqlite = { version = "0.34", features = ["bundled"] }
+rusqlite = { version = "0.35", features = ["bundled"] }
 thiserror = "2.0"
 r2d2 = "0.8"
-r2d2_sqlite = "0.27"
+r2d2_sqlite = "0.28"
 uuid = { version = "1.4", features = ["v4"] }
 triomphe = "0.1.14"
 sqlited-macros = { path = "./sqlited-macros" }
