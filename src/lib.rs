@@ -9,9 +9,7 @@ use thiserror::Error;
 pub use r2d2;
 pub use r2d2_sqlite;
 pub use rusqlite;
-pub use sqlited_macros::{sql, sql_params, sql_str};
-
-extern crate bincode;
+pub use sqlited_macros::{table, sql, sql_params, sql_str, autoincrement, primary_key, unique, check, not_null, default_value, foreign_key, index, unique_index, constraint};
 
 // Export our public modules
 pub mod connection;
@@ -20,24 +18,34 @@ pub mod migrations;
 pub mod pool;
 pub mod savepoint;
 
-mod types;
+pub mod types;
 
-#[cfg(test)]
-mod macros_test;
-#[cfg(test)]
-mod without_id_test; // 添加新的测试模块
-#[cfg(test)]
-mod sql_params_test; // 引入新的测试模块
-#[cfg(test)]
-mod custom_type_test; // 引入新的测试模块
+// #[cfg(test)]
+// mod macros_test;
+// #[cfg(test)]
+// mod without_id_test; // 添加新的测试模块
+// #[cfg(test)]
+// mod sql_params_test; // 引入新的测试模块
+// #[cfg(test)]
+// mod custom_type_test; // 引入新的测试模块
 
 pub mod prelude {
-    pub use crate::macros::{
-        SqlQuery, SqliteTypeName, SqliteBindableValue, SqliteCustomType, StaticParamsExt, StaticParamsHolder, WithoutId,
-        WithoutIdTableInfo,
-    };
+    pub use crate::macros::*;
     pub use crate::types::*;
     pub use rusqlite::ToSql;
+    pub use crate::connection::*;
+    pub use crate::{
+        autoincrement,
+        primary_key,
+        unique,
+        check,
+        not_null,
+        default_value,
+        foreign_key,
+        constraint,
+        index,
+        unique_index,
+    };
 }
 
 pub use prelude::*;

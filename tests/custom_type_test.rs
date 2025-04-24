@@ -3,11 +3,11 @@ mod tests {
     use std::collections::HashMap;
 
     use serde::{Deserialize, Serialize};
-    use crate::{
-        connection::{SqliteConnection, new_memory_pool, get_connection},
+    use sqlited::{
+        prelude::*,
         table,
         sql,
-        sqld
+        sqld,
     };
 
     // 定义枚举
@@ -53,7 +53,7 @@ mod tests {
 
     // 定义测试表
     table! {
-        CustomTypes {
+        struct CustomTypes {
             #[autoincrement]
             id: i32,
             name: String,
@@ -65,7 +65,7 @@ mod tests {
 
     // 定义测试表
     table! {
-        TestCustom {
+        struct TestCustom {
             #[autoincrement]
             id: i32,
             name: String, 

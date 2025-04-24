@@ -1,4 +1,8 @@
 use crate::connection::SqliteConnection;
+use std::sync::{LazyLock, Mutex, Arc};
+use std::collections::HashMap;
+use std::path::PathBuf;
+use crate::pool::ConnectionPool;
 /// Structure that holds a SQL query and its parameters
 pub struct SqlQuery {
     pub query: String,
@@ -62,435 +66,6 @@ impl SqlQuery {
             .collect();
         stmt.query_row(param_refs.as_slice(), f)
     }
-}
-
-/// Counts the number of columns in a table definition
-#[macro_export]
-macro_rules! count_columns {
-    () => { 0 };
-    ($col:ident) => { 1 };
-    ($col:ident, $($rest:ident),*) => { 1 + $crate::count_columns!($($rest),*) };
-}
-
-/// Helper macro to process default values, particularly for datetime fields
-#[macro_export]
-macro_rules! process_default_value {
-    ($value:expr, $type_name:expr) => {{
-        match $type_name {
-            "sqlited::types::datetime::UtcDateTime" => {
-                match $value {
-                    "now" => {
-                        // Handle datetime('now') for TEXT fields
-                        concat!(" DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))")
-                    }
-                    _ => {
-                        // Handle other default values
-                        concat!(" DEFAULT (", $value, ")")
-                    }
-                }
-            }
-            "sqlited::types::timestamp::Timestamp" => {
-                match $value {
-                    "now" => {
-                        // Handle 'now' for TEXT fields
-                        concat!(" DEFAULT (strftime('%s', 'now'))")
-                    }
-                    _ => {
-                        // Handle other default values
-                        concat!(" DEFAULT (", $value, ")")
-                    }
-                }
-            }
-            _ => {
-                // For other types, use the default value as is
-                concat!(" DEFAULT ", $value)
-            }
-        }
-    }};
-}
-
-/// Macro for creating SQLite tables
-#[macro_export]
-macro_rules! table {
-    // 基本版本 - 不带自增 ID
-    ($name:ident {
-        $(
-            $(#[default($default_value:expr)])?
-            $column:ident: $type:ty
-        ),* $(,)?
-    }) => {
-        use $crate::prelude::*;
-
-        pub struct $name {
-            $(pub $column: $type),*
-        }
-
-        // 为模型类型实现 Default trait
-        impl Default for $name {
-            fn default() -> Self {
-                $name {
-                    $($column: Default::default()),*
-                }
-            }
-        }
-
-        impl WithoutIdTableInfo for $name {
-            fn non_id_field_names() -> Vec<&'static str> {
-                vec![
-                    $(stringify!($column)),*
-                ]
-            }
-        }
-
-        impl $name {
-            pub fn create_table_sql() -> String {
-                let mut sql = format!("CREATE TABLE IF NOT EXISTS {} (\n", stringify!($name).to_lowercase());
-                $(
-                    sql.push_str(&format!("    {} {}{}",
-                                          stringify!($column).to_lowercase(),
-                                          <$type>::sql_type_name(),
-                                          $(process_default_value!($default_value, std::any::type_name::<$type>()))?
-                                          ));
-                    sql.push_str(",\n");
-                )*
-                sql.pop(); // Remove last comma
-                sql.pop(); // Remove last newline
-                sql.push_str("\n);");
-                sql
-            }
-
-            /// Generate SQL for inserting a record
-            pub fn insert() -> String {
-                let cols = vec![$(stringify!($column).to_lowercase()),*].join(", ");
-                let placeholders = vec!["?"; $crate::count_columns!($($column),*)].join(", ");
-                format!("INSERT INTO {} ({}) VALUES ({})",
-                        stringify!($name).to_lowercase(),
-                        cols,
-                        placeholders)
-            }
-
-            /// Generate SQL for updating a record by its ID
-            /// Assumes the first field in the struct is the ID field
-            pub fn update() -> String {
-                let cols = vec![$(stringify!($column).to_lowercase()),*];
-                let table_name = stringify!($name).to_lowercase();
-                let id_field = cols[0].clone();
-
-                let set_clause = cols.iter().skip(1)
-                    .map(|col| format!("{} = ?", col))
-                    .collect::<Vec<String>>()
-                    .join(", ");
-
-                format!("UPDATE {} SET {} WHERE {} = ?", table_name, set_clause, id_field)
-            }
-
-            /// Generate SQL for deleting a record by its ID
-            /// Assumes the first field in the struct is the ID field
-            pub fn delete() -> String {
-                let table_name = stringify!($name).to_lowercase();
-                let id_field = stringify!($($column),*).split(',').next().unwrap().trim().to_lowercase();
-
-                format!("DELETE FROM {} WHERE {} = ?", table_name, id_field)
-            }
-
-            /// Generate SQL for querying all records
-            pub fn query() -> String {
-                let cols = vec![$(stringify!($column).to_lowercase()),*].join(", ");
-                format!("SELECT {} FROM {}", cols, stringify!($name).to_lowercase())
-            }
-
-            /// Generate SQL for querying a record by its ID
-            /// Assumes the first field in the struct is the ID field
-            pub fn query_by_id() -> String {
-                let cols = vec![$(stringify!($column).to_lowercase()),*];
-                let table_name = stringify!($name).to_lowercase();
-                let id_field = cols[0].clone();
-
-                format!(
-                    "SELECT {} FROM {} WHERE {} = ?",
-                    cols.join(", "),
-                    table_name,
-                    id_field
-                )
-            }
-
-            pub fn to_params(&self) -> Vec<&dyn rusqlite::ToSql> {
-                vec![
-                    $(&self.$column as &dyn rusqlite::ToSql),*
-                ]
-            }
-
-            /// Get parameters for update operation (all fields except ID, followed by ID)
-            pub fn to_update_params(&self) -> Vec<&dyn rusqlite::ToSql> {
-                #[allow(unused_mut)]
-                let mut result = vec![];
-                $(
-                    result.push(&self.$column as &dyn rusqlite::ToSql);
-                )*
-
-                // Remove the first element (ID field) and add it at the end for the WHERE clause
-                if !result.is_empty() {
-                    let id = result.remove(0);
-                    result.push(id);
-                }
-
-                result
-            }
-
-            /// 获取表的所有字段名（不包含 ID 字段）
-            pub fn non_id_field_names() -> Vec<&'static str> {
-                vec![
-                    $(stringify!($column)),*
-                ]
-            }
-
-            /// 检查字段名是否存在于模型中
-            pub const fn has_field(field_name: &str) -> bool {
-                // 由于常量函数中不能使用许多标准库功能，我们必须手动实现字符串比较
-                // 将待比较的字段名与所有字段一一比较
-                let field_names = [$(stringify!($column)),*];
-
-                let mut i = 0;
-                while i < field_names.len() {
-                    // 将字段名转换为小写进行比较
-                    if $crate::macros::manual_str_eq_ignore_case(field_names[i], field_name) {
-                        return true;
-                    }
-                    i += 1;
-                }
-
-                false
-            }
-        }
-    };
-
-    // 带自增 ID 的版本
-    ($name:ident {
-        #[autoincrement]
-        $id_column:ident: $id_type:ty,
-        $(
-            $(#[default($default_value:expr)])?
-            $column:ident: $type:ty
-        ),* $(,)?
-    }) => {
-        use $crate::prelude::*;
-
-        pub struct $name {
-            pub $id_column: $id_type,
-            $(pub $column: $type),*
-        }
-
-        // 为模型类型实现 Default trait
-        impl Default for $name {
-            fn default() -> Self {
-                $name {
-                    $id_column: Default::default(),
-                    $($column: Default::default()),*
-                }
-            }
-        }
-
-        // 实现 WithoutIdTableInfo trait
-        impl WithoutIdTableInfo for $name {
-            fn non_id_field_names() -> Vec<&'static str> {
-                vec![
-                    $(stringify!($column)),*
-                ]
-            }
-        }
-
-        impl $name {
-            pub fn create_table_sql() -> String {
-                // 检查 ID 类型是否是整数类型
-                if !<$id_type>::is_integer_type() {
-                    panic!("Autoincrement column must be an integer type (i32 or i64)");
-                }
-
-                let mut sql = format!("CREATE TABLE IF NOT EXISTS {} (\n", stringify!($name).to_lowercase());
-
-                // ID 列定义为主键自增
-                sql.push_str(&format!("    {} {} PRIMARY KEY AUTOINCREMENT,\n",
-                                    stringify!($id_column).to_lowercase(),
-                                    <$id_type>::sql_type_name()));
-
-                // 其他列定义，包括默认值
-                $(
-                    // 基本列定义
-                    sql.push_str(&format!("    {} {}",
-                                        stringify!($column).to_lowercase(),
-                                        <$type>::sql_type_name()));
-
-                    // 可选的默认值
-                    $(
-                        sql.push_str(&$crate::process_default_value!($default_value, std::any::type_name::<$type>()));
-                    )?
-
-                    sql.push_str(",\n");
-                )*
-
-                sql.pop(); // Remove last comma
-                sql.pop(); // Remove last newline
-                sql.push_str("\n);");
-                sql
-            }
-
-            /// Generate SQL for inserting a record with explicit ID
-            pub fn insert() -> String {
-                let cols = vec![stringify!($id_column).to_lowercase(), $(stringify!($column).to_lowercase()),*].join(", ");
-                let placeholders_count = 1 + $crate::count_columns!($($column),*);
-                let placeholders = vec!["?"; placeholders_count].join(", ");
-
-                format!("INSERT INTO {} ({}) VALUES ({})",
-                        stringify!($name).to_lowercase(),
-                        cols,
-                        placeholders)
-            }
-
-            /// 生成不带 ID 的插入 SQL（利用自增特性）
-            pub fn insert_without_id() -> String {
-                let cols = vec![$(stringify!($column).to_lowercase()),*].join(", ");
-                let placeholders = vec!["?"; $crate::count_columns!($($column),*)].join(", ");
-
-                format!("INSERT INTO {} ({}) VALUES ({})",
-                        stringify!($name).to_lowercase(),
-                        cols,
-                        placeholders)
-            }
-
-            /// Generate SQL for inserting with specific columns
-            pub fn insert_with(cols: &[&str]) -> String {
-                let table_name = stringify!($name).to_lowercase();
-
-                // Filter only the fields that exist
-                let valid_fields: Vec<&str> = cols.iter()
-                    .filter(|&f| Self::has_field(f))
-                    .map(|&f| f)
-                    .collect();
-
-                // Join the valid fields
-                let cols = valid_fields.join(", ");
-                let placeholders = vec!["?"; valid_fields.len()].join(", ");
-
-                format!("INSERT INTO {} ({}) VALUES ({})",
-                        table_name, cols, placeholders)
-            }
-
-            /// Generate SQL for updating a record by its ID
-            pub fn update() -> String {
-                let table_name = stringify!($name).to_lowercase();
-                let id_field = stringify!($id_column).to_lowercase();
-
-                let set_clause = vec![$(stringify!($column).to_lowercase()),*].iter()
-                    .map(|col| format!("{} = ?", col))
-                    .collect::<Vec<String>>()
-                    .join(", ");
-
-                format!("UPDATE {} SET {} WHERE {} = ?", table_name, set_clause, id_field)
-            }
-
-            /// Generate SQL for deleting a record by its ID
-            pub fn delete() -> String {
-                let table_name = stringify!($name).to_lowercase();
-                let id_field = stringify!($id_column).to_lowercase();
-
-                format!("DELETE FROM {} WHERE {} = ?", table_name, id_field)
-            }
-
-            /// Generate SQL for querying all records
-            pub fn query() -> String {
-                let cols = vec![stringify!($id_column).to_lowercase(), $(stringify!($column).to_lowercase()),*].join(", ");
-                format!("SELECT {} FROM {}", cols, stringify!($name).to_lowercase())
-            }
-
-            /// Generate SQL for querying a record by its ID
-            pub fn query_by_id() -> String {
-                let cols = vec![stringify!($id_column).to_lowercase(), $(stringify!($column).to_lowercase()),*].join(", ");
-                let table_name = stringify!($name).to_lowercase();
-                let id_field = stringify!($id_column).to_lowercase();
-
-                format!(
-                    "SELECT {} FROM {} WHERE {} = ?",
-                    cols,
-                    table_name,
-                    id_field
-                )
-            }
-
-            pub fn to_params(&self) -> Vec<&dyn ToSql> {
-                vec![
-                    &self.$id_column as &dyn ToSql,
-                    $(&self.$column as &dyn ToSql),*
-                ]
-            }
-
-            /// 从带有通用 WithoutId 转换为完整的模型
-            pub fn from_without_id(id: $id_type, without_id: &WithoutId<$name>) -> Self {
-                // 这里需要依照字段名获取字段
-                $(
-                let $column = match without_id.inner.get(stringify!($column)) {
-                    Some(_value) => {
-                        // 尝试将 Box<dyn ToSql> 转换为实际类型
-                        // 由于类型系统的限制，这里我们简单地返回一个默认值或从临时字符串解析
-                        // 在实际使用时，用户应该使用 FromRow trait 从行中获取数据
-                        <$type as std::default::Default>::default()
-                    },
-                    None => <$type as std::default::Default>::default()
-                };
-                )*
-
-                Self {
-                    $id_column: id,
-                    $($column),*
-                }
-            }
-
-            /// Get parameters for update operation (fields followed by ID for WHERE clause)
-            pub fn to_update_params(&self) -> Vec<&dyn ToSql> {
-                let mut result = vec![
-                    $(&self.$column as &dyn ToSql),*
-                ];
-                // 添加 ID 作为 WHERE 条件的参数
-                result.push(&self.$id_column);
-                result
-            }
-
-            /// 获取表的所有字段名（ID 字段在首位）
-            pub fn field_names() -> Vec<&'static str> {
-                vec![
-                    stringify!($id_column),
-                    $(stringify!($column)),*
-                ]
-            }
-
-            /// 获取表的所有字段名（不包含 ID 字段）
-            pub fn non_id_field_names() -> Vec<&'static str> {
-                vec![
-                    $(stringify!($column)),*
-                ]
-            }
-
-            /// 检查字段名是否存在于模型中
-            pub const fn has_field(field_name: &str) -> bool {
-                // 首先检查 ID 字段
-                if $crate::macros::manual_str_eq_ignore_case(stringify!($id_column), field_name) {
-                    return true;
-                }
-
-                // 然后检查其他字段
-                let field_names = [$(stringify!($column)),*];
-
-                let mut i = 0;
-                while i < field_names.len() {
-                    if $crate::macros::manual_str_eq_ignore_case(field_names[i], field_name) {
-                        return true;
-                    }
-                    i += 1;
-                }
-
-                false
-            }
-        }
-    };
 }
 
 /// 创建新的不带 ID 的记录
@@ -796,110 +371,6 @@ impl<T: SqliteBindableValue + Default + Clone + std::fmt::Debug> crate::macros::
     }
 }
 
-/// 常量上下文中不区分大小写的字符串比较函数
-///
-/// 这个函数用于在编译时比较两个字符串是否相等（忽略大小写）
-#[inline]
-pub const fn str_eq_ignore_case(s1: &str, s2: &str) -> bool {
-    // 首先检查长度是否相同
-    if s1.len() != s2.len() {
-        return false;
-    }
-
-    // 逐字符比较（在常量上下文中没有迭代器和其他高级功能）
-    let s1_bytes = s1.as_bytes();
-    let s2_bytes = s2.as_bytes();
-
-    let mut i = 0;
-    while i < s1_bytes.len() {
-        let c1 = s1_bytes[i];
-        let c2 = s2_bytes[i];
-
-        // 如果字符相同，继续比较
-        if c1 == c2 {
-            i += 1;
-            continue;
-        }
-
-        // 如果是大小写字母，尝试转换后比较
-        if is_ascii_letter(c1) && is_ascii_letter(c2) {
-            // 将两个字符都转为小写形式进行比较
-            let c1_lower = to_ascii_lowercase(c1);
-            let c2_lower = to_ascii_lowercase(c2);
-
-            if c1_lower != c2_lower {
-                return false;
-            }
-        } else {
-            // 非字母字符必须完全相同
-            return false;
-        }
-
-        i += 1;
-    }
-
-    true
-}
-
-/// 检查一个字节是否是 ASCII 字母
-#[inline]
-pub const fn is_ascii_letter(c: u8) -> bool {
-    (c >= b'A' && c <= b'Z') || (c >= b'a' && c <= b'z')
-}
-
-/// 将 ASCII 字母转为小写
-#[inline]
-pub const fn to_ascii_lowercase(c: u8) -> u8 {
-    if c >= b'A' && c <= b'Z' {
-        c + 32 // 将大写字母转换为小写字母
-    } else {
-        c
-    }
-}
-
-/// 用于宏模板中的不区分大小写字符串比较函数（公开供 create_table! 宏使用）
-#[inline]
-pub const fn manual_str_eq_ignore_case(s1: &str, s2: &str) -> bool {
-    // 首先检查长度是否相同
-    if s1.len() != s2.len() {
-        return false;
-    }
-
-    // 逐字符比较（在常量上下文中没有迭代器和其他高级功能）
-    let s1_bytes = s1.as_bytes();
-    let s2_bytes = s2.as_bytes();
-
-    let mut i = 0;
-    while i < s1_bytes.len() {
-        let c1 = s1_bytes[i];
-        let c2 = s2_bytes[i];
-
-        // 如果字符相同，继续比较
-        if c1 == c2 {
-            i += 1;
-            continue;
-        }
-
-        // 如果是大小写字母，尝试转换后比较
-        if is_ascii_letter(c1) && is_ascii_letter(c2) {
-            // 将两个字符都转为小写形式进行比较
-            let c1_lower = to_ascii_lowercase(c1);
-            let c2_lower = to_ascii_lowercase(c2);
-
-            if c1_lower != c2_lower {
-                return false;
-            }
-        } else {
-            // 非字母字符必须完全相同
-            return false;
-        }
-
-        i += 1;
-    }
-
-    true
-}
-
 /// 通用的 WithoutId 结构体，用于自增 ID 表的插入操作
 pub struct WithoutId<T> {
     pub inner: std::collections::HashMap<String, Box<dyn rusqlite::ToSql>>,
@@ -1130,22 +601,108 @@ impl<T> WithoutId<T> {
 
 /// Trait for providing table information to WithoutId
 pub trait WithoutIdTableInfo {
-    /// Returns a list of field names that are not the ID field
-    fn non_id_field_names() -> Vec<&'static str>;
+    /// 返回表名
+    fn table_name() -> &'static str;
 
-    /// Returns a list of all field names including the ID field
+    /// 返回表的所有字段名列表
+    fn field_names() -> Vec<&'static str>;
+
+    /// 返回表的字段类型列表
+    fn field_types() -> Vec<(&'static str, &'static str)>;
+
+    /// 生成创建表的 SQL 语句，包含全部约束和索引
+    fn create_table_sql() -> String;
+
+    /// 返回除 id 字段外的所有字段名
+    fn non_id_field_names() -> Vec<&'static str> {
+        Self::field_names().into_iter()
+            .filter(|&name| name != "id")
+            .collect()
+    }
+
+    /// 返回所有字段名（包括 id）
     fn all_field_names() -> Vec<&'static str> {
-        let mut fields = vec!["id"];
-        fields.extend(Self::non_id_field_names());
-        fields
+        Self::field_names()
+    }
+
+    /// 生成不带 id 字段的插入 SQL 语句
+    fn insert_without_id() -> String {
+        let table_name = Self::table_name();
+        let field_names: Vec<&str> = Self::field_names().into_iter()
+            .filter(|&f| f != "id")
+            .collect();
+        
+        if field_names.is_empty() {
+            return format!("INSERT INTO {} DEFAULT VALUES", table_name);
+        }
+        
+        let placeholders: Vec<&str> = field_names.iter()
+            .map(|_| "?")
+            .collect();
+        
+        format!(
+            "INSERT INTO {} ({}) VALUES ({})",
+            table_name,
+            field_names.join(", "),
+            placeholders.join(", ")
+        )
+    }
+
+    /// 生成指定字段的插入 SQL 语句
+    fn insert_with(fields: &[&str]) -> String {
+        let table_name = Self::table_name();
+        
+        if fields.is_empty() {
+            return format!("INSERT INTO {} DEFAULT VALUES", table_name);
+        }
+        
+        let placeholders: Vec<&str> = fields.iter()
+            .map(|_| "?")
+            .collect();
+        
+        format!(
+            "INSERT INTO {} ({}) VALUES ({})",
+            table_name,
+            fields.join(", "),
+            placeholders.join(", ")
+        )
     }
 
     /// 获取字段的元数据信息（用于增强 IDE 支持）
     fn field_metadata() -> Vec<(&'static str, &'static str)> {
-        Self::non_id_field_names()
+        Self::field_types()
+    }
+    
+    /// 检查表是否包含指定字段
+    fn has_field(field_name: &str) -> bool {
+        Self::field_names()
             .iter()
-            .map(|&name| (name, "unknown"))
-            .collect()
+            .any(|&f| f.eq_ignore_ascii_case(field_name))
+    }
+    
+    /// 获取指定字段的 SQLite 类型
+    fn field_type(field_name: &str) -> Option<&'static str> {
+        Self::field_types()
+            .iter()
+            .find(|(name, _)| name.eq_ignore_ascii_case(field_name))
+            .map(|(_, type_name)| *type_name)
+    }
+    
+    /// 判断指定字段是否为 ID 字段
+    fn is_id_field(field_name: &str) -> bool {
+        field_name.eq_ignore_ascii_case("id")
+    }
+    
+    /// 获取表中所有索引的定义 SQL
+    fn index_definitions() -> Vec<String> {
+        // 默认实现为空 - 在启用索引支持的 table! 实现中会被覆盖
+        Vec::new()
+    }
+    
+    /// 获取表中所有约束的定义 SQL
+    fn constraint_definitions() -> Vec<String> {
+        // 默认实现为空 - 在启用约束支持的 table! 实现中会被覆盖
+        Vec::new()
     }
 }
 
@@ -1291,4 +848,563 @@ impl<T: rusqlite::ToSql + Clone + 'static> ToSqlClone for T {
     fn clone_box(&self) -> Box<dyn rusqlite::ToSql> {
         Box::new(self.clone())
     }
+}
+
+/// 全局连接池管理，用于在多个打开同一数据库文件的请求间共享连接
+pub static CONNECTION_POOLS: LazyLock<Mutex<HashMap<PathBuf, Arc<ConnectionPool>>>> = 
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// 定义数据库结构、表和迁移
+///
+/// 此宏允许以多种方式定义数据库：
+/// - 使用默认路径的静态引用（适合大多数应用）
+/// - 使用自定义路径的工厂方法（适合多实例或动态场景）
+/// - 在迁移数组中直接包含表定义
+///
+/// # 示例
+///
+/// ## 默认路径模式
+/// ```rust
+/// define_db!(
+///   pub static ref USER_DB = [
+///     table!(User {
+///       #[autoincrement]
+///       id: i64,
+///       name: String,
+///       email: String
+///     }),
+///     "CREATE INDEX IF NOT EXISTS users_email_idx ON users(email)"
+///   ]
+/// )
+/// ```
+///
+/// ## 自定义路径模式
+/// ```rust
+/// define_db!(
+///   pub static ref CONFIG_DB(db_path: Option<PathBuf>) = [
+///     table!(Settings {
+///       key: String,
+///       value: String
+///     })
+///   ]
+/// )
+/// 
+/// // 使用示例
+/// let db = CONFIG_DB.open(Some(path_to_db));
+/// let memory_db = CONFIG_DB.memory();
+/// ```
+#[macro_export]
+macro_rules! define_db {
+    (
+        pub static ref $id:ident(db_path: Option<PathBuf>) = [
+            $(
+                $element:expr
+            ),* $(,)?
+        ]
+    ) => {
+        pub struct Database {
+            conn: $crate::connection::SqliteConnection,
+            pool: std::sync::Arc<$crate::pool::ConnectionPool>,
+        }
+
+        impl std::ops::Deref for Database {
+            type Target = $crate::connection::SqliteConnection;
+
+            fn deref(&self) -> &Self::Target {
+                &self.conn
+            }
+        }
+        
+        impl Database {
+            fn new(conn: $crate::connection::SqliteConnection, pool: std::sync::Arc<$crate::pool::ConnectionPool>) -> Self {
+                Self {
+                    conn,
+                    pool,
+                }
+            }
+            
+            pub fn raw_connection(&self) -> &$crate::connection::SqliteConnection {
+                &self.conn
+            }
+            
+            // 返回迁移列表
+            fn get_migrations() -> Vec<String> {
+                vec![
+                    $(
+                        $element.to_string(),
+                    )*
+                ]
+            }
+            
+            // 应用迁移到此数据库
+            pub fn apply_migrations(&self) -> rusqlite::Result<()> {
+                // 创建迁移表（如果不存在）
+                self.conn.execute(
+                    "CREATE TABLE IF NOT EXISTS _sqlited_migrations (
+                        id INTEGER PRIMARY KEY,
+                        name TEXT NOT NULL,
+                        applied_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+                    )",
+                    [],
+                )?;
+                
+                // 应用事务确保迁移的原子性
+                self.conn.execute("BEGIN TRANSACTION", [])?;
+                
+                let mut success = true;
+                // 按顺序应用所有迁移
+                for migration in Self::get_migrations() {
+                    // 检查迁移是否已应用
+                    let already_applied = self.conn.query_row(
+                        "SELECT COUNT(*) FROM _sqlited_migrations WHERE name = ?",
+                        [&migration],
+                        |row| row.get::<_, i32>(0),
+                    ).unwrap_or(0) > 0;
+                    
+                    if !already_applied {
+                        // 应用迁移
+                        match self.conn.execute(&migration, []) {
+                            Ok(_) => {
+                                // 记录已应用的迁移
+                                if let Err(e) = self.conn.execute(
+                                    "INSERT INTO _sqlited_migrations (name) VALUES (?)",
+                                    [&migration],
+                                ) {
+                                    log::error!("Failed to record migration: {}", e);
+                                    success = false;
+                                    break;
+                                }
+                            },
+                            Err(e) => {
+                                log::error!("Failed to apply migration: {}", e);
+                                success = false;
+                                break;
+                            }
+                        }
+                    }
+                }
+                
+                // 根据迁移结果提交或回滚
+                if success {
+                    self.conn.execute("COMMIT", [])?;
+                } else {
+                    // 回滚所有变更
+                    self.conn.execute("ROLLBACK", [])?;
+                    return Err(rusqlite::Error::SqliteFailure(
+                        rusqlite::ffi::Error {
+                            code: rusqlite::ffi::ErrorCode::InternalMalfunction,
+                            extended_code: 1
+                        },
+                        Some("Failed to apply migrations".to_string())
+                    ));
+                }
+                
+                Ok(())
+            }
+            
+            /// 返回一个新的连接到同一数据库
+            pub fn new_connection(&self) -> rusqlite::Result<Self> {
+                let conn = $crate::connection::get_connection(&self.pool)?;
+                Ok(Self::new(conn, self.pool.clone()))
+            }
+            
+            /// 在事务中执行闭包，自动处理提交和回滚
+            pub fn transaction<T, F>(&self, f: F) -> rusqlite::Result<T>
+            where
+                F: FnOnce(&Self) -> rusqlite::Result<T>,
+            {
+                self.conn.execute("BEGIN TRANSACTION", [])?;
+                
+                match f(self) {
+                    Ok(result) => {
+                        self.conn.execute("COMMIT", [])?;
+                        Ok(result)
+                    },
+                    Err(e) => {
+                        self.conn.execute("ROLLBACK", [])?;
+                        Err(e)
+                    }
+                }
+            }
+        }
+
+        #[allow(non_camel_case_types)]
+        pub struct $id {}
+        
+        impl $id {
+            /// 打开给定路径的数据库（如果为None则使用内存模式）
+            pub fn open(path: Option<impl AsRef<std::path::Path>>) -> rusqlite::Result<Database> {
+                match path {
+                    Some(path) => {
+                        let path_buf = path.as_ref().to_path_buf();
+                        let canonical_path = if path_buf.exists() {
+                            std::fs::canonicalize(&path_buf).unwrap_or(path_buf)
+                        } else {
+                            // 确保目录存在
+                            if let Some(parent) = path_buf.parent() {
+                                std::fs::create_dir_all(parent)
+                                    .map_err(|e| rusqlite::Error::SqliteFailure(
+                                        rusqlite::ffi::Error {
+                                            code: rusqlite::ffi::ErrorCode::CannotOpen,
+                                            extended_code: 1
+                                        },
+                                        Some(format!("Failed to create database directory: {}", e))
+                                    ))?;
+                            }
+                            path_buf
+                        };
+                        
+                        // 尝试从连接池缓存获取
+                        let pool = {
+                            let mut pools = $crate::CONNECTION_POOLS.lock().unwrap();
+                            if let Some(existing_pool) = pools.get(&canonical_path) {
+                                existing_pool.clone()
+                            } else {
+                                // 创建新的连接池
+                                let pool = match $crate::connection::new_file_pool(&canonical_path) {
+                                    Ok(pool) => std::sync::Arc::new(pool),
+                                    Err(e) => return Err(rusqlite::Error::SqliteFailure(
+                                        rusqlite::ffi::Error {
+                                            code: rusqlite::ffi::ErrorCode::InternalMalfunction,
+                                            extended_code: 1
+                                        },
+                                        Some(format!("Pool error: {}", e))
+                                    )),
+                                };
+                                pools.insert(canonical_path, pool.clone());
+                                pool
+                            }
+                        };
+                        
+                        let conn = match $crate::connection::get_connection(&pool) {
+                            Ok(conn) => conn,
+                            Err(e) => return Err(rusqlite::Error::SqliteFailure(
+                                rusqlite::ffi::Error {
+                                    code: rusqlite::ffi::ErrorCode::InternalMalfunction,
+                                    extended_code: 1
+                                },
+                                Some(format!("Failed to get connection: {}", e))
+                            )),
+                        };
+                        
+                        let db = Database::new(conn, pool);
+                        
+                        // 应用迁移
+                        db.apply_migrations()?;
+                        
+                        Ok(db)
+                    },
+                    None => {
+                        // 内存模式不共享连接池
+                        let pool = match $crate::connection::new_memory_pool() {
+                            Ok(pool) => std::sync::Arc::new(pool),
+                            Err(e) => return Err(rusqlite::Error::SqliteFailure(
+                                rusqlite::ffi::Error {
+                                    code: rusqlite::ffi::ErrorCode::InternalMalfunction,
+                                    extended_code: 1
+                                },
+                                Some(format!("Memory pool error: {}", e))
+                            )),
+                        };
+                        
+                        let conn = match $crate::connection::get_connection(&pool) {
+                            Ok(conn) => conn,
+                            Err(e) => return Err(rusqlite::Error::SqliteFailure(
+                                rusqlite::ffi::Error {
+                                    code: rusqlite::ffi::ErrorCode::InternalMalfunction,
+                                    extended_code: 1
+                                },
+                                Some(format!("Failed to get connection: {}", e))
+                            )),
+                        };
+                        
+                        let db = Database::new(conn, pool);
+                        
+                        // 应用迁移
+                        db.apply_migrations()?;
+                        
+                        Ok(db)
+                    }
+                }
+            }
+            
+            /// 打开内存数据库
+            pub fn memory() -> rusqlite::Result<Database> {
+                Self::open(None::<&std::path::Path>)
+            }
+            
+            /// 在临时位置创建数据库
+            pub fn temp() -> rusqlite::Result<Database> {
+                let temp_dir = std::env::temp_dir();
+                let db_file = temp_dir.join(format!("sqlited_{}.db", uuid::Uuid::new_v4()));
+                Self::open(Some(db_file))
+            }
+            
+            /// 打开共享内存数据库（使用命名内存数据库）
+            pub fn shared_memory(name: &str) -> rusqlite::Result<Database> {
+                // 正确的共享内存语法，注意必须以 "file:" 开头
+                let memory_path = format!("file:{}?mode=memory&cache=shared", name);
+                
+                // 使用标准 open 方法
+                Self::open(Some(memory_path))
+            }
+        }
+        
+        // 创建一个单例实例
+        #[allow(non_upper_case_globals)]
+        pub static $id: $id = $id {};
+    };
+    
+    // 标准版本（无路径参数，使用标准环境/默认路径）
+    (
+        pub static ref $id:ident = [
+            $(
+                $element:expr
+            ),* $(,)?
+        ]
+    ) => {
+        // 处理表定义和SQL迁移
+        const _MIGRATIONS: &[&str] = &[
+            $(
+                $crate::_process_migration_element!($element)
+            ),*
+        ];
+
+        // 提取并定义表类型
+        $(
+            $crate::_extract_table_definition!($element);
+        )*
+
+        // 定义数据库结构
+        pub struct Database {
+            conn: $crate::connection::SqliteConnection,
+            $(
+                $crate::_extract_table_field!($element)
+            )*
+        }
+
+        impl std::ops::Deref for Database {
+            type Target = $crate::connection::SqliteConnection;
+
+            fn deref(&self) -> &Self::Target {
+                &self.conn
+            }
+        }
+        
+        impl Database {
+            fn new(conn: $crate::connection::SqliteConnection) -> Self {
+                Self {
+                    $(
+                        $crate::_extract_table_instance!($element, conn.clone())
+                    )*
+                    conn,
+                }
+            }
+            
+            pub fn raw_connection(&self) -> &$crate::connection::SqliteConnection {
+                &self.conn
+            }
+            
+            // 应用迁移到此数据库
+            fn apply_migrations(&self) -> rusqlite::Result<()> {
+                // 创建迁移表（如果不存在）
+                self.conn.execute(
+                    "CREATE TABLE IF NOT EXISTS _sqlited_migrations (
+                        id INTEGER PRIMARY KEY,
+                        name TEXT NOT NULL,
+                        applied_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+                    )",
+                    [],
+                )?;
+                
+                // 使用事务确保原子性
+                self.conn.execute("BEGIN TRANSACTION", [])?;
+                
+                let mut success = true;
+                // 按顺序应用所有迁移
+                for migration in _MIGRATIONS.iter() {
+                    // 检查迁移是否已应用
+                    let already_applied = self.conn.query_row(
+                        "SELECT COUNT(*) FROM _sqlited_migrations WHERE name = ?",
+                        [*migration],
+                        |row| row.get::<_, i32>(0),
+                    ).unwrap_or(0) > 0;
+                    
+                    if !already_applied {
+                        // 应用迁移
+                        match self.conn.execute(migration, []) {
+                            Ok(_) => {
+                                // 记录已应用的迁移
+                                if let Err(e) = self.conn.execute(
+                                    "INSERT INTO _sqlited_migrations (name) VALUES (?)",
+                                    [*migration],
+                                ) {
+                                    log::error!("Failed to record migration: {}", e);
+                                    success = false;
+                                    break;
+                                }
+                            },
+                            Err(e) => {
+                                log::error!("Failed to apply migration: {}", e);
+                                success = false;
+                                break;
+                            }
+                        }
+                    }
+                }
+                
+                // 根据迁移结果提交或回滚
+                if success {
+                    self.conn.execute("COMMIT", [])?;
+                } else {
+                    // 回滚所有变更
+                    self.conn.execute("ROLLBACK", [])?;
+                    return Err(rusqlite::Error::SqliteFailure(
+                        rusqlite::ffi::Error::new(rusqlite::ffi::ErrorCode::Error),
+                        Some("Failed to apply migrations".to_string())
+                    ));
+                }
+                
+                Ok(())
+            }
+            
+            // 在事务中执行闭包，自动处理提交和回滚
+            pub fn transaction<T, F>(&self, f: F) -> rusqlite::Result<T>
+            where
+                F: FnOnce(&Self) -> rusqlite::Result<T>,
+            {
+                self.conn.execute("BEGIN TRANSACTION", [])?;
+                
+                match f(self) {
+                    Ok(result) => {
+                        self.conn.execute("COMMIT", [])?;
+                        Ok(result)
+                    },
+                    Err(e) => {
+                        self.conn.execute("ROLLBACK", [])?;
+                        Err(e)
+                    }
+                }
+            }
+            
+            // 获取静态引用
+            pub fn get() -> &'static Self {
+                &$id
+            }
+        }
+    };
+}
+
+/// 处理迁移元素的辅助宏
+#[macro_export]
+#[doc(hidden)]
+macro_rules! _process_migration_element {
+    // 对于table!宏调用，使用create_table_sql()
+    (table!($table_name:ident { $($rest:tt)* })) => {
+        $table_name::create_table_sql()
+    };
+    
+    // 对于原始字符串，按原样使用
+    ($sql:expr) => {
+        $sql
+    };
+}
+
+/// 提取表定义的辅助宏
+#[macro_export]
+#[doc(hidden)]
+macro_rules! _extract_table_definition {
+    // 对于table!宏调用，定义表
+    (table!($table_name:ident { $($rest:tt)* })) => {
+        table!($table_name { $($rest)* });
+    };
+    
+    // 对于原始字符串，不做任何操作
+    ($sql:expr) => {};
+}
+
+/// 提取表字段的辅助宏
+#[macro_export]
+#[doc(hidden)]
+macro_rules! _extract_table_field {
+    // 对于table!宏调用，创建字段
+    (table!($table_name:ident { $($rest:tt)* })) => {
+        pub $table_name: $table_name,
+    };
+    
+    // 对于原始字符串，不做任何操作
+    ($sql:expr) => {};
+}
+
+/// 提取表实例化的辅助宏
+#[macro_export]
+#[doc(hidden)]
+macro_rules! _extract_table_instance {
+    // 对于table!宏调用，创建实例
+    (table!($table_name:ident { $($rest:tt)* }), $conn:expr) => {
+        $table_name: $table_name::default(),
+    };
+    
+    // 对于原始字符串，不做任何操作
+    ($sql:expr, $conn:expr) => {};
+}
+
+/// 注册 sqlited 的属性宏
+/// 这个宏必须在使用 table! 宏之前调用，以确保所有自定义属性都在作用域内
+#[macro_export]
+macro_rules! register_attribute_macros {
+    () => {
+        // 属性宏声明（这些不会生成任何代码，只是对编译器的提示）
+        #[allow(unused_attributes)]
+        const _: () = {
+            // 这里声明所有可能用到的属性，告诉编译器这些是合法的属性名
+            struct __AttrAutoincrement;
+            struct __AttrPrimaryKey;
+            struct __AttrUnique;
+            struct __AttrCheck;
+            struct __AttrNotNull;
+            struct __AttrDefault;
+            struct __AttrForeignKey;
+            struct __AttrDbDefault;
+            struct __AttrIndex;
+            struct __AttrUniqueIndex;
+            struct __AttrConstraint;
+            
+            // 用空元组作为返回值，避免未使用警告
+            ()
+        };
+        
+        // 自定义属性声明
+        #[allow(non_snake_case)]
+        trait AttributeDefs {
+            #[allow(unused_attributes)]
+            const autoincrement: () = ();
+            #[allow(unused_attributes)]
+            const primary_key: () = ();
+            #[allow(unused_attributes)]
+            const unique: () = ();
+            #[allow(unused_attributes)]
+            const check: () = ();
+            #[allow(unused_attributes)]
+            const not_null: () = ();
+            #[allow(unused_attributes)]
+            const default: () = ();
+            #[allow(unused_attributes)]
+            const foreign_key: () = ();
+            #[allow(unused_attributes)]
+            const db_default: () = ();
+            #[allow(unused_attributes)]
+            const index: () = ();
+            #[allow(unused_attributes)]
+            const unique_index: () = ();
+            #[allow(unused_attributes)]
+            const constraint: () = ();
+        }
+        
+        #[allow(non_snake_case, dead_code)]
+        struct __SqlitedAttributes;
+        
+        #[allow(non_snake_case, dead_code)]
+        impl AttributeDefs for __SqlitedAttributes {}
+    };
 }

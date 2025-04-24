@@ -30,7 +30,7 @@ pub fn sql(input: TokenStream) -> TokenStream {
                   // 处理&params格式
                   return quote! {
                       {
-                          crate::SqlQuery {
+                          sqlited::SqlQuery {
                               query: #sql_lit.to_string(),
                               params:(#params_ts).to_boxed_vec()
                           }
@@ -42,7 +42,7 @@ pub fn sql(input: TokenStream) -> TokenStream {
             quote! {
                 {
                     // 创建包含SQL和参数的Query对象
-                    crate::SqlQuery {
+                    sqlited::SqlQuery {
                         query: #sql_lit.to_string(),
                         params: (#params).to_boxed_vec()
                     }

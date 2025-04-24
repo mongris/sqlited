@@ -29,6 +29,15 @@ impl SqliteConnection {
         rows.collect()
     }
 
+    pub fn query_row<P, F, T>(&self, sql: &str, params: P, f: F) -> rusqlite::Result<T>
+    where
+        P: rusqlite::Params,
+        F: FnOnce(&rusqlite::Row<'_>) -> rusqlite::Result<T>,
+    {
+        let mut stmt = self.raw_connection().prepare(sql)?;
+        stmt.query_row(params, f)
+    }
+
     /// Begin a new transaction
     pub fn begin_transaction(&mut self) -> Result<rusqlite::Transaction> {
         self.inner.transaction()
@@ -52,6 +61,10 @@ impl SqliteConnection {
     pub fn raw_connection_mut(&mut self) -> &mut rusqlite::Connection {
         &mut self.inner
     }
+
+    pub fn last_insert_rowid(&self) -> i64 {
+        self.inner.last_insert_rowid()  // 假设 self.0 是内部的 rusqlite::Connection
+    }
 }
 
 /// Helper function to create a new in-memory SQLite database connection pool
@@ -65,6 +78,14 @@ pub fn new_file_pool<P: AsRef<Path>>(path: P) -> Result<ConnectionPool, crate::p
 }
 
 /// Helper function to get a connection from a pool
-pub fn get_connection(pool: &ConnectionPool) -> Result<SqliteConnection, r2d2::Error> {
-    pool.get().map(SqliteConnection::new)
+pub fn get_connection(pool: &ConnectionPool) -> Result<SqliteConnection> {
+    pool.get().map_err(|e| {
+        rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error {
+                code: rusqlite::ffi::ErrorCode::InternalMalfunction,
+                extended_code: 1
+            },
+            Some(format!("Connection pool error: {}", e))
+        )
+    }).map(|conn| SqliteConnection::new(conn))
 }

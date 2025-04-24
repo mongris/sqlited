@@ -1,20 +1,21 @@
 #[cfg(test)]
 mod tests {
-    use crate::{
+    use sqlited::{
+        prelude::*,
         table,
-        connection::{SqliteConnection, new_memory_pool, get_connection},
-        sql_params,
-        macros::SqliteTypeName,
+        sql_params
     };
 
     // 重新定义用户模型
-    table!(User {
-        #[autoincrement]
-        id: i32,
-        name: String,
-        age: i32,
-        email: Option<String>,
-    });
+    table! {
+        struct User {
+            #[autoincrement]
+            id: i32,
+            name: String,
+            age: i32,
+            email: Option<String>,
+        }
+    }
 
     // 创建测试数据库连接的辅助函数
     fn create_test_connection() -> SqliteConnection {

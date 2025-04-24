@@ -90,7 +90,7 @@ fn do_parse(input: ParseStream) -> Result<TokenStream2> {
             }
             
             // 创建一个新的 WithoutId 实例
-            let mut result = crate::WithoutId::<#model_type>::new();
+            let mut result = sqlited::WithoutId::<#model_type>::new();
             
             // 设置每个字段的值
             #(
