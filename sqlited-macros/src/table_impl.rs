@@ -7,27 +7,27 @@ use syn::token::Comma;
 
 /// 表级属性
 struct TableAttribute {
-  attr_type: TableAttributeType,
-  value: String,
+    attr_type: TableAttributeType,
+    value: Vec<String>,
 }
 
 enum TableAttributeType {
-  Constraint,
-  Index,
-  UniqueIndex,
+    Constraint,
+    Index,
+    UniqueIndex,
 }
 
 /// 字段属性
 struct FieldAttribute {
-  name: syn::Ident,
-  ty: syn::Type,
-  is_autoincrement: bool,
-  is_primary_key: bool,
-  is_unique: bool,
-  is_not_null: bool,
-  check_constraint: Option<String>,
-  default_value: Option<String>,
-  foreign_key: Option<(String, String, String, String)>, // (table, column, on_delete, on_update)
+    name: syn::Ident,
+    ty: syn::Type,
+    is_autoincrement: bool,
+    is_primary_key: bool,
+    is_unique: bool,
+    is_not_null: bool,
+    check_constraint: Option<String>,
+    default_value: Option<String>,
+    foreign_key: Option<(String, String, String, String)>, // (table, column, on_delete, on_update)
 }
 
 
@@ -35,6 +35,8 @@ struct FieldAttribute {
 pub fn table(input: TokenStream) -> TokenStream {
     // 解析输入为 struct 定义
     let input = parse_macro_input!(input as DeriveInput);
+
+    // println!("Processing table: {} attrs: {:?}", input.ident, input.attrs);
     
     // 获取结构体名称
     let struct_name = &input.ident;
@@ -79,59 +81,84 @@ pub fn table(input: TokenStream) -> TokenStream {
 
 /// 处理表级属性
 fn process_table_attributes(attrs: &[Attribute]) -> Vec<TableAttribute> {
-  let mut table_attrs = Vec::new();
+    let mut table_attrs = Vec::new();
   
-  for attr in attrs {
-      let mut attr_type = None;
-      let mut attr_value = None;
-      
-      if let Err(e) = attr.parse_nested_meta(|meta| {
-          // 检查是否是表级约束
-          if meta.path.is_ident("constraint") {
-              attr_type = Some(TableAttributeType::Constraint);
-              // 解析括号内的内容
-              let content;
-              parenthesized!(content in meta.input);
-              if let Ok(lit) = content.parse::<syn::LitStr>() {
-                  attr_value = Some(lit.value());
-              }
-          } 
-          // 检查是否是索引
-          else if meta.path.is_ident("index") {
-              attr_type = Some(TableAttributeType::Index);
-              let content;
-              parenthesized!(content in meta.input);
-              if let Ok(lit) = content.parse::<syn::LitStr>() {
-                  attr_value = Some(lit.value());
-              }
-          } 
-          // 检查是否是唯一索引
-          else if meta.path.is_ident("unique_index") {
-              attr_type = Some(TableAttributeType::UniqueIndex);
-              let content;
-              parenthesized!(content in meta.input);
-              if let Ok(lit) = content.parse::<syn::LitStr>() {
-                  attr_value = Some(lit.value());
-              }
-          }
-          // 可以添加检查其他表级属性
-          
-          Ok(())
-      }) {
-          // 解析失败，打印错误信息
-          eprintln!("Error parsing attribute: {}", e);
-      }
-      
-      // 如果成功解析了属性类型和值，添加到属性列表
-      if let (Some(attr_type), Some(value)) = (attr_type, attr_value) {
-          table_attrs.push(TableAttribute {
-              attr_type,
-              value,
-          });
-      }
-  }
+    // 1. 直接检查每个属性的路径
+    for attr in attrs {
+        if let Some(attr_meta_name) = attr.path().get_ident() {
+
+            let attr_name = attr_meta_name.to_string();
+            
+            // 打印调试信息
+            // println!("Processing attribute: {}", attr_name);
+
+
+            if attr_name == "constraint" {
+                // 处理表级约束
+                match &attr.meta {
+                    Meta::List(list) => {
+                        if let Ok(lit) = list.parse_args::<LitStr>() {
+                            // println!("Found constraint: {}", lit.value());
+                            table_attrs.push(TableAttribute {
+                                attr_type: TableAttributeType::Constraint,
+                                value: vec![lit.value()],
+                            });
+                        }
+                    },
+                    _ => panic!("Incorrect format for using the `constraint` attribute."),
+                }
+            } else if attr_name == "index" {
+                // 处理普通索引
+                match &attr.meta {
+                    Meta::List(list) => {
+                        if let Ok(args) = list.parse_args_with(Punctuated::<LitStr, Token![,]>::parse_terminated) {
+                            if args.len() >= 2 {
+                                let idx_name = args[0].value();
+                                let idx_columns = args[1].value();
+                                // println!("Found index: {} -> {}", idx_name, idx_columns);
+                                table_attrs.push(TableAttribute {
+                                    attr_type: TableAttributeType::Index,
+                                    value: vec![idx_name, idx_columns],
+                                });
+                            }
+                        }
+                    },
+                    _ => panic!("Incorrect format for using the `index` attribute."),
+                }
+            } else if attr_meta_name == "unique_index" {
+                // 处理唯一索引
+                match &attr.meta {
+                    Meta::List(list) => {
+                        if let Ok(args) = list.parse_args_with(Punctuated::<LitStr, Token![,]>::parse_terminated) {
+                            if args.len() >= 2 {
+                                let idx_name = args[0].value();
+                                let idx_columns = args[1].value();
+                                // println!("Found unique index: {} -> {}", idx_name, idx_columns);
+                                table_attrs.push(TableAttribute {
+                                    attr_type: TableAttributeType::UniqueIndex,
+                                    value: vec![idx_name, idx_columns],
+                                });
+                            }
+                        }
+                    },
+                    _ => panic!("Incorrect format for using the `unique_index` attribute."),
+                }
+            }
+        }
+    }
+
+    // 打印找到的所有表级属性
+    // println!("Found {} table attributes", table_attrs.len());
+    // for (i, attr) in table_attrs.iter().enumerate() {
+    //     let type_str = match attr.attr_type {
+    //         TableAttributeType::Constraint => "Constraint",
+    //         TableAttributeType::Index => "Index",
+    //         TableAttributeType::UniqueIndex => "UniqueIndex",
+    //     };
+    //     println!("Attribute {}: {:?} with values: {:?}", i, type_str, attr.value);
+    // }
   
-  table_attrs
+    table_attrs
 }
 
 /// 处理字段属性
@@ -149,27 +176,21 @@ fn process_field_attributes(field: &syn::Field) -> FieldAttribute {
     };
     
     for attr in &field.attrs {
-        // 检查简单的标记属性 (无参数)
-        let path_str = attr.path().to_token_stream().to_string();
-        if path_str == "autoincrement" {
-            field_attr.is_autoincrement = true;
-            continue;
-        } else if path_str == "primary_key" {
-            field_attr.is_primary_key = true;
-            continue; 
-        } else if path_str == "unique" {
-            field_attr.is_unique = true;
-            continue;
-        } else if path_str == "not_null" {
-            field_attr.is_not_null = true;
-            continue;
-        }
-
         if let Some(attr_meta_name) = attr.path().get_ident() {
-            if attr_meta_name == "check" {
-                let attr_meta = attr.meta.clone();
-
-                match attr_meta {
+            if attr_meta_name == "autoincrement" {
+                field_attr.is_autoincrement = true;
+                continue;
+            } else if attr_meta_name == "primary_key" {
+                field_attr.is_primary_key = true;
+                continue; 
+            } else if attr_meta_name == "unique" {
+                field_attr.is_unique = true;
+                continue;
+            } else if attr_meta_name == "not_null" {
+                field_attr.is_not_null = true;
+                continue;
+            } else if attr_meta_name == "check" {
+                match &attr.meta {
                     Meta::List(list) => {
                       let lit = list.parse_args::<LitStr>().unwrap();
                       field_attr.check_constraint = Some(lit.value());
@@ -177,9 +198,7 @@ fn process_field_attributes(field: &syn::Field) -> FieldAttribute {
                     _ => panic!("Incorrect format for using the `check` attribute."),
                 }
             } else if attr_meta_name == "default_value" {
-                let attr_meta = attr.meta.clone();
-
-                match attr_meta {
+                match &attr.meta {
                   Meta::List(list) => {
                       let lit = list.parse_args::<LitStr>().unwrap();
                       field_attr.default_value = Some(lit.value());
@@ -187,25 +206,21 @@ fn process_field_attributes(field: &syn::Field) -> FieldAttribute {
                     _ => panic!("Incorrect format for using the `default_value` attribute."),
                 }
             } else if attr_meta_name == "foreign_key" {
-                let attr_meta = attr.meta.clone();
-
-                match attr_meta {
+                match &attr.meta {
                     Meta::List(list) => {
-                        list.parse_nested_meta(|meta| {
-                            let content;
-                            parenthesized!(content in meta.input);
-                            let lit: syn::LitStr = content.parse()?;
-                            let params = lit.value();
-                            let parts: Vec<&str> = params.split(',').collect();
-                            if parts.len() >= 2 {
-                                let ref_table = parts[0].trim().to_string();
-                                let ref_column = parts[1].trim().to_string();
-                                let on_delete = if parts.len() > 2 { parts[2].trim().to_string() } else { "NO ACTION".to_string() };
-                                let on_update = if parts.len() > 3 { parts[3].trim().to_string() } else { "NO ACTION".to_string() };
-                                field_attr.foreign_key = Some((ref_table, ref_column, on_delete, on_update));
-                            }
-                            Ok(())
-                        }).unwrap();
+                        let lits = list.parse_args_with(Punctuated::<LitStr, Token![,]>::parse_terminated).unwrap();
+                        let mut parts: Vec<String> = Vec::new();
+                        for lit in lits {
+                            parts.push(lit.value());
+                        }
+                        if parts.len() < 2 {
+                            panic!("Incorrect format for using the `foreign_key` attribute.");
+                        }
+                        let ref_table = parts[0].clone();
+                        let ref_column = parts[1].clone();
+                        let on_delete = if parts.len() > 2 { parts[2].clone() } else { "NO ACTION".to_string() };
+                        let on_update = if parts.len() > 3 { parts[3].clone() } else { "NO ACTION".to_string() };
+                        field_attr.foreign_key = Some((ref_table, ref_column, on_delete, on_update));
                     },
                     _ => panic!("Incorrect format for using the `foreign_key` attribute."),
                 }
@@ -275,19 +290,35 @@ fn generate_table_impl(
 // 添加以下函数
 
 fn generate_table_name(struct_name: &syn::Ident) -> TokenStream2 {
-  let struct_name_str = struct_name.to_string();
-  quote! {
-      fn table_name() -> &'static str {
-          static TABLE_NAME: &str = #struct_name_str;
-          use std::sync::LazyLock;
-          static LOWERCASE_NAME: LazyLock<String> = LazyLock::new(|| {
-              TABLE_NAME.to_lowercase()
-          });
-          
-          // 泄露一次字符串，使其具有 'static 生命周期
-          Box::leak(LOWERCASE_NAME.clone().into_boxed_str())
-      }
-  }
+    let struct_name_str = struct_name.to_string();
+    quote! {
+        fn table_name() -> &'static str {
+            static TABLE_NAME: &str = #struct_name_str;
+            use std::sync::LazyLock;
+            static SNAKE_NAME: LazyLock<String> = LazyLock::new(|| {
+                // 将驼峰命名法转换为蛇形命名法
+                let mut result = String::new();
+                let chars: Vec<char> = TABLE_NAME.chars().collect();
+                
+                for (i, &c) in chars.iter().enumerate() {
+                    if c.is_uppercase() {
+                        // 不是首字母且是大写，添加下划线
+                        if i > 0 {
+                            result.push('_');
+                        }
+                        result.push(c.to_lowercase().next().unwrap());
+                    } else {
+                        result.push(c);
+                    }
+                }
+                
+                result.to_lowercase()
+            });
+            
+            // 泄露一次字符串，使其具有 'static 生命周期
+            Box::leak(SNAKE_NAME.clone().into_boxed_str())
+        }
+    }
 }
 
 fn generate_field_names(fields: &Punctuated<syn::Field, Comma>) -> TokenStream2 {
@@ -439,7 +470,7 @@ fn generate_create_table_sql(
   let table_constraints = table_attrs.iter().filter_map(|attr| {
       match attr.attr_type {
           TableAttributeType::Constraint => {
-              let constraint = &attr.value;
+              let constraint = &attr.value[0];
               Some(quote! {
                   sql.push_str(&format!("    {},\n", #constraint));
               })
@@ -450,74 +481,76 @@ fn generate_create_table_sql(
   
   // 处理索引
   let indices = table_attrs.iter().filter_map(|attr| {
-      match attr.attr_type {
-          TableAttributeType::Index => {
-              let parts: Vec<&str> = attr.value.split(',').collect();
-              if parts.len() >= 2 {
-                  let idx_name = parts[0].trim();
-                  let idx_columns = parts[1].trim();
-                  Some(quote! {
-                      indexes.push_str(&format!(
-                          "CREATE INDEX IF NOT EXISTS {} ON {} ({});\n", 
-                          #idx_name, 
-                          Self::table_name(),
-                          #idx_columns
-                      ));
-                  })
-              } else {
-                  None
-              }
-          },
-          TableAttributeType::UniqueIndex => {
-              let parts: Vec<&str> = attr.value.split(',').collect();
-              if parts.len() >= 2 {
-                  let idx_name = parts[0].trim();
-                  let idx_columns = parts[1].trim();
-                  Some(quote! {
-                      indexes.push_str(&format!(
-                          "CREATE UNIQUE INDEX IF NOT EXISTS {} ON {} ({});\n", 
-                          #idx_name, 
-                          Self::table_name(),
-                          #idx_columns
-                      ));
-                  })
-              } else {
-                  None
-              }
-          },
-          _ => None,
-      }
-  });
+        match attr.attr_type {
+            TableAttributeType::Index => {
+                if attr.value.len() >= 2 {
+                    let idx_name = &attr.value[0];
+                    let idx_columns = &attr.value[1];
+                    Some(quote! {
+                        // 使用直接的字符串拼接而不是格式化
+                        indexes.push_str("CREATE INDEX IF NOT EXISTS ");
+                        indexes.push_str(#idx_name);
+                        indexes.push_str(" ON ");
+                        indexes.push_str(Self::table_name());
+                        indexes.push_str(" (");
+                        indexes.push_str(#idx_columns);
+                        indexes.push_str(");\n");
+                    })
+                } else {
+                    println!("Index attribute has insufficient values: {:?}", attr.value);
+                    None
+                }
+            },
+            TableAttributeType::UniqueIndex => {
+                if attr.value.len() >= 2 {
+                    let idx_name = &attr.value[0];
+                    let idx_columns = &attr.value[1];
+                    Some(quote! {
+                        indexes.push_str(&format!(
+                            "CREATE UNIQUE INDEX IF NOT EXISTS {} ON {} ({});\n", 
+                            #idx_name, 
+                            Self::table_name(),
+                            #idx_columns
+                        ));
+                    })
+                } else {
+                    println!("Unique index attribute has insufficient values: {:?}", attr.value);
+                    None
+                }
+            },
+            _ => None,
+        }
+    });
   
-  quote! {
-      fn create_table_sql() -> String {
-          let mut sql = format!("CREATE TABLE IF NOT EXISTS {} (\n", Self::table_name());
-          
-          // 添加字段定义
-          #(#field_definitions)*
-          
-          // 添加表级约束
-          #(#table_constraints)*
-          
-          // 移除最后的逗号和换行符
-          if sql.ends_with(",\n") {
-              sql.pop();
-              sql.pop();
-          }
-          
-          sql.push_str("\n)");
-          
-          // 处理索引
-          let mut indexes = String::new();
-          #(#indices)*
-          
-          if !indexes.is_empty() {
-              sql.push_str(";\n");
-              sql.push_str(&indexes);
-              sql.pop();
-          }
-          
-          sql
-      }
-  }
+    quote! {
+        fn create_table_sql() -> String {
+            let mut sql = format!("CREATE TABLE IF NOT EXISTS {} (\n", Self::table_name());
+            
+            // 添加字段定义
+            #(#field_definitions)*
+            
+            // 添加表级约束
+            #(#table_constraints)*
+            
+            // 移除最后的逗号和换行符
+            if sql.ends_with(",\n") {
+                sql.pop();
+                sql.pop();
+                sql.push_str("\n");
+            }
+            
+            sql.push_str(")");
+            
+            // 处理索引
+            let mut indexes = String::new();
+            #(#indices)*
+            
+            if !indexes.is_empty() {
+                sql.push_str(";\n");
+                sql.push_str(&indexes);
+            }
+            
+            sql
+        }
+    }
 }

@@ -12,40 +12,37 @@ mod tests {
     };
 
     // 定义一个用于测试的用户模型
-    table!{
-        struct User {
-            #[autoincrement]
-            id: i32,
-            name: String,
-            age: i32,
-            email: Option<String>,
-            #[default_value("now")]
-            created_at: UtcDateTime,
-            #[default_value("now")]
-            created_at_timestamp: Timestamp,
-            #[default_value("1")]
-            active: bool,
-        }
+    #[table]
+    struct User {
+        #[autoincrement]
+        id: i32,
+        name: String,
+        age: i32,
+        email: Option<String>,
+        #[default_value("now")]
+        created_at: UtcDateTime,
+        #[default_value("now")]
+        created_at_timestamp: Timestamp,
+        #[default_value("1")]
+        active: bool,
     }
     
     // 定义一个用于测试的帖子模型
-    table!{
-        struct TestPost {
-            #[autoincrement]
-            id: i32,
-            title: String,
-            content: String,
-            published: bool,
-            user_id: i32,
-        }
+    #[table]
+    struct TestPost {
+        #[autoincrement]
+        id: i32,
+        title: String,
+        content: String,
+        published: bool,
+        user_id: i32,
     }
 
     // 使用 define_db 定义测试数据库
     define_db!(
         pub static ref TEST_DB(db_path: Option<PathBuf>) = [
-            User::create_table_sql(),
-            
-            TestPost::create_table_sql(),
+            User,
+            TestPost,
             
             // 创建带有约束的表
             "CREATE TABLE IF NOT EXISTS constrained_user (
@@ -226,7 +223,7 @@ mod tests {
         
         // 查询所有已发布的帖子
         let published_posts = db.query(
-            "SELECT id, title FROM testpost WHERE published = ? AND user_id = ? ORDER BY id",
+            "SELECT id, title FROM test_post WHERE published = ? AND user_id = ? ORDER BY id",
             params![&true, &user_id],
             |row| Ok((row.get::<_, i32>(0)?, row.get::<_, String>(1)?))
         ).unwrap();
@@ -241,22 +238,22 @@ mod tests {
         
         // 更新帖子标题
         db.execute(
-            "UPDATE testpost SET title = ? WHERE id = ?",
+            "UPDATE test_post SET title = ? WHERE id = ?",
             params![&"Updated First Post", &first_post_id],
         ).unwrap();
         
         // 验证更新成功
-        let updated_title = &db.query("SELECT title FROM testpost WHERE id = ?", &[&first_post_id],
+        let updated_title = &db.query("SELECT title FROM test_post WHERE id = ?", &[&first_post_id],
             |row| row.get::<_, String>(0)
         ).unwrap()[0];
         
         assert_eq!(*updated_title, "Updated First Post");
         
         // 批量删除所有帖子
-        db.execute("DELETE FROM testpost WHERE user_id = ?", &[&user_id]).unwrap();
+        db.execute("DELETE FROM test_post WHERE user_id = ?", &[&user_id]).unwrap();
         
         // 验证删除成功
-        let post_count = db.query("SELECT COUNT(*) FROM testpost WHERE user_id = ?", &[&user_id],
+        let post_count = db.query("SELECT COUNT(*) FROM test_post WHERE user_id = ?", &[&user_id],
             |row| row.get::<_, i32>(0)
         ).unwrap()[0];
         
@@ -452,7 +449,7 @@ mod tests {
         let user_post_counts = db.query(
             "SELECT u.name, COUNT(p.id) as post_count 
              FROM user u 
-             LEFT JOIN testpost p ON u.id = p.user_id AND p.published = 1
+             LEFT JOIN test_post p ON u.id = p.user_id AND p.published = 1
              GROUP BY u.id
              ORDER BY post_count DESC",
             [],
@@ -465,7 +462,7 @@ mod tests {
         
         // 测试复杂查询3: 空电子邮件的用户帖子数
         let count = db.query(
-            "SELECT COUNT(*) FROM testpost p
+            "SELECT COUNT(*) FROM test_post p
              JOIN user u ON p.user_id = u.id
              WHERE u.email IS NULL",
             [],
@@ -478,7 +475,7 @@ mod tests {
         // 使用事务更新所有未发布的帖子为已发布
         db.transaction(|tx| {
             let updated_count = tx.execute(
-                "UPDATE testpost SET published = 1 WHERE published = 0",
+                "UPDATE test_post SET published = 1 WHERE published = 0",
                 [],
             )?;
             
@@ -491,7 +488,7 @@ mod tests {
         
         // 验证所有帖子都已发布
         let all_published = db.query(
-            "SELECT COUNT(*) = 0 FROM testpost WHERE published = 0",
+            "SELECT COUNT(*) = 0 FROM test_post WHERE published = 0",
             [],
             |row| row.get::<_, bool>(0)
         ).unwrap()[0];

@@ -52,25 +52,23 @@ mod tests {
     sqld!(json Config);
 
     // 定义测试表
-    table! {
-        struct CustomTypes {
-            #[autoincrement]
-            id: i32,
-            name: String,
-            axis: Axis,
-            layout: Layout,
-            config: Config
-        }
+    #[table]
+    struct CustomTypes {
+        #[autoincrement]
+        id: i32,
+        name: String,
+        axis: Axis,
+        layout: Layout,
+        config: Config
     }
 
     // 定义测试表
-    table! {
-        struct TestCustom {
-            #[autoincrement]
-            id: i32,
-            name: String, 
-            axis: Axis
-        }
+    #[table]
+    struct TestCustom {
+        #[autoincrement]
+        id: i32,
+        name: String, 
+        axis: Axis
     }
 
     // 辅助函数：创建内存数据库连接
@@ -87,7 +85,7 @@ mod tests {
         
         // 插入数据
         let query = sql!(
-            INSERT INTO testcustom (name, axis) VALUES (?, ?),
+            INSERT INTO test_custom (name, axis) VALUES (?, ?),
             TestCustom {
                 name: "水平测试".to_string(),
                 axis: Axis::Vertical,
@@ -99,7 +97,7 @@ mod tests {
         
         // 验证插入的数据
         let (data_name, data_axis) = &conn.query(
-            "SELECT name, axis FROM testcustom WHERE id = 1", 
+            "SELECT name, axis FROM test_custom WHERE id = 1", 
             [], 
             |row| Ok((row.get::<_, String>(0)?, row.get::<_, Axis>(1)?))
         ).unwrap()[0];
@@ -138,7 +136,7 @@ mod tests {
         
         // 插入数据
         let query = sql!(
-            INSERT INTO customtypes (name, axis, layout, config) VALUES (?, ?, ?, ?),
+            INSERT INTO custom_types (name, axis, layout, config) VALUES (?, ?, ?, ?),
             CustomTypes {
                 name: "混合类型测试".to_string(),
                 axis,
@@ -152,7 +150,7 @@ mod tests {
         
         // 验证插入的数据
         let results = conn.query(
-            "SELECT name, axis, layout, config FROM customtypes WHERE id = 1", 
+            "SELECT name, axis, layout, config FROM custom_types WHERE id = 1", 
             [], 
             |row| Ok((
                 row.get::<_, String>(0)?,

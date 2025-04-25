@@ -45,35 +45,35 @@ pub fn sql_params(input: TokenStream) -> TokenStream {
 /// # 示例
 ///
 /// ```rust
-/// table! {
-///     #[index("idx_user_name", "name")]
-///     #[unique_index("idx_user_email", "email")]
-///     struct User {
-///         #[autoincrement]
-///         id: i32,
-///         #[unique]
-///         username: String,
-///         #[unique]
-///         email: Option<String>,
-///         #[check("age >= 18")]
-///         age: i32,
-///     }
+/// #[table]
+/// #[index("idx_user_name", "name")]
+/// #[unique_index("idx_user_email", "email")]
+/// struct User {
+///     #[autoincrement]
+///     id: i32,
+///     #[unique]
+///     username: String,
+///     #[unique]
+///     email: Option<String>,
+///     #[check("age >= 18")]
+///     age: i32,
 /// }
 ///
-/// table! {
-///     #[constraint("FOREIGN KEY (author_id) REFERENCES user(id) ON DELETE CASCADE")]
-///     struct Post {
-///         #[autoincrement]
-///         id: i32,
-///         title: String,
-///         content: String,
-///         #[foreign_key("user", "id", "CASCADE", "CASCADE")]
-///         author_id: i32,
-///     }
+///
+/// #[table]
+/// #[constraint("FOREIGN KEY (author_id) REFERENCES user(id) ON DELETE CASCADE")]
+/// struct Post {
+///     #[autoincrement]
+///     id: i32,
+///     title: String,
+///     content: String,
+///     #[foreign_key("user", "id", "CASCADE", "CASCADE")]
+///     author_id: i32,
 /// }
+///
 /// ```
-#[proc_macro]
-pub fn table(input: TokenStream) -> TokenStream {
+#[proc_macro_attribute]
+pub fn table(_attr: TokenStream, input: TokenStream) -> TokenStream {
     table_impl::table(input)
 }
 

@@ -865,14 +865,16 @@ pub static CONNECTION_POOLS: LazyLock<Mutex<HashMap<PathBuf, Arc<ConnectionPool>
 ///
 /// ## 默认路径模式
 /// ```rust
+/// #[table]
+/// struct User {
+///   #[autoincrement]
+///   id: i64,
+///   name: String,
+///   email: String
+/// }
 /// define_db!(
 ///   pub static ref USER_DB = [
-///     table!(User {
-///       #[autoincrement]
-///       id: i64,
-///       name: String,
-///       email: String
-///     }),
+///     User,
 ///     "CREATE INDEX IF NOT EXISTS users_email_idx ON users(email)"
 ///   ]
 /// )
@@ -880,12 +882,14 @@ pub static CONNECTION_POOLS: LazyLock<Mutex<HashMap<PathBuf, Arc<ConnectionPool>
 ///
 /// ## 自定义路径模式
 /// ```rust
+/// #[table]
+/// struct Settings {
+///   key: String,
+///   value: String
+/// }
 /// define_db!(
 ///   pub static ref CONFIG_DB(db_path: Option<PathBuf>) = [
-///     table!(Settings {
-///       key: String,
-///       value: String
-///     })
+///     Settings
 ///   ]
 /// )
 /// 
@@ -898,7 +902,7 @@ macro_rules! define_db {
     (
         pub static ref $id:ident(db_path: Option<PathBuf>) = [
             $(
-                $element:expr
+                $element:tt
             ),* $(,)?
         ]
     ) => {
@@ -931,7 +935,7 @@ macro_rules! define_db {
             fn get_migrations() -> Vec<String> {
                 vec![
                     $(
-                        $element.to_string(),
+                        $crate::_resolve_migration_element!($element),
                     )*
                 ]
             }
@@ -954,31 +958,43 @@ macro_rules! define_db {
                 let mut success = true;
                 // 按顺序应用所有迁移
                 for migration in Self::get_migrations() {
-                    // 检查迁移是否已应用
-                    let already_applied = self.conn.query_row(
-                        "SELECT COUNT(*) FROM _sqlited_migrations WHERE name = ?",
-                        [&migration],
-                        |row| row.get::<_, i32>(0),
-                    ).unwrap_or(0) > 0;
+                    // 按分号拆分多个 SQL 语句
+                    let statements = migration.split(';')
+                        .map(|s| s.trim())
+                        .filter(|s| !s.is_empty())
+                        .collect::<Vec<_>>();
                     
-                    if !already_applied {
-                        // 应用迁移
-                        match self.conn.execute(&migration, []) {
-                            Ok(_) => {
-                                // 记录已应用的迁移
-                                if let Err(e) = self.conn.execute(
-                                    "INSERT INTO _sqlited_migrations (name) VALUES (?)",
-                                    [&migration],
-                                ) {
-                                    log::error!("Failed to record migration: {}", e);
+                    for statement in &statements {
+                        if statement.is_empty() {
+                            continue;
+                        }
+                        
+                        // 对每条语句单独应用迁移逻辑
+                        let statement_hash = format!("{:x}", md5::compute(statement));
+                        let already_applied = self.conn.query_row(
+                            "SELECT COUNT(*) FROM _sqlited_migrations WHERE name = ?",
+                            [&statement_hash],
+                            |row| row.get::<_, i32>(0),
+                        ).unwrap_or(0) > 0;
+                        
+                        if !already_applied {
+                            match self.conn.execute(statement, []) {
+                                Ok(_) => {
+                                    // 记录已应用的迁移
+                                    if let Err(e) = self.conn.execute(
+                                        "INSERT INTO _sqlited_migrations (name) VALUES (?)",
+                                        [&statement_hash],
+                                    ) {
+                                        eprintln!("Failed to record migration: {}", e);
+                                        success = false;
+                                        break;
+                                    }
+                                },
+                                Err(e) => {
+                                    eprintln!("Failed to apply migration: {}", e);
                                     success = false;
                                     break;
                                 }
-                            },
-                            Err(e) => {
-                                log::error!("Failed to apply migration: {}", e);
-                                success = false;
-                                break;
                             }
                         }
                     }
@@ -1222,32 +1238,44 @@ macro_rules! define_db {
                 
                 let mut success = true;
                 // 按顺序应用所有迁移
-                for migration in _MIGRATIONS.iter() {
-                    // 检查迁移是否已应用
-                    let already_applied = self.conn.query_row(
-                        "SELECT COUNT(*) FROM _sqlited_migrations WHERE name = ?",
-                        [*migration],
-                        |row| row.get::<_, i32>(0),
-                    ).unwrap_or(0) > 0;
+                for migration in Self::get_migrations() {
+                    // 按分号拆分多个 SQL 语句
+                    let statements = migration.split(';')
+                        .map(|s| s.trim())
+                        .filter(|s| !s.is_empty())
+                        .collect::<Vec<_>>();
                     
-                    if !already_applied {
-                        // 应用迁移
-                        match self.conn.execute(migration, []) {
-                            Ok(_) => {
-                                // 记录已应用的迁移
-                                if let Err(e) = self.conn.execute(
-                                    "INSERT INTO _sqlited_migrations (name) VALUES (?)",
-                                    [*migration],
-                                ) {
-                                    log::error!("Failed to record migration: {}", e);
+                    for statement in &statements {
+                        if statement.is_empty() {
+                            continue;
+                        }
+                        
+                        // 对每条语句单独应用迁移逻辑
+                        let statement_hash = format!("{:x}", md5::compute(statement));
+                        let already_applied = self.conn.query_row(
+                            "SELECT COUNT(*) FROM _sqlited_migrations WHERE name = ?",
+                            [&statement_hash],
+                            |row| row.get::<_, i32>(0),
+                        ).unwrap_or(0) > 0;
+                        
+                        if !already_applied {
+                            match self.conn.execute(statement, []) {
+                                Ok(_) => {
+                                    // 记录已应用的迁移
+                                    if let Err(e) = self.conn.execute(
+                                        "INSERT INTO _sqlited_migrations (name) VALUES (?)",
+                                        [&statement_hash],
+                                    ) {
+                                        eprintln!("Failed to record migration: {}", e);
+                                        success = false;
+                                        break;
+                                    }
+                                },
+                                Err(e) => {
+                                    eprintln!("Failed to apply migration: {}", e);
                                     success = false;
                                     break;
                                 }
-                            },
-                            Err(e) => {
-                                log::error!("Failed to apply migration: {}", e);
-                                success = false;
-                                break;
                             }
                         }
                     }
@@ -1260,7 +1288,10 @@ macro_rules! define_db {
                     // 回滚所有变更
                     self.conn.execute("ROLLBACK", [])?;
                     return Err(rusqlite::Error::SqliteFailure(
-                        rusqlite::ffi::Error::new(rusqlite::ffi::ErrorCode::Error),
+                        rusqlite::ffi::Error {
+                            code: rusqlite::ffi::ErrorCode::InternalMalfunction,
+                            extended_code: 1
+                        },
                         Some("Failed to apply migrations".to_string())
                     ));
                 }
@@ -1406,5 +1437,20 @@ macro_rules! register_attribute_macros {
         
         #[allow(non_snake_case, dead_code)]
         impl AttributeDefs for __SqlitedAttributes {}
+    };
+}
+
+/// 将表名或SQL表达式转换为迁移字符串
+#[macro_export]
+#[doc(hidden)]
+macro_rules! _resolve_migration_element {
+    // 处理标识符 (表名)
+    ($table:ident) => {
+        $table::create_table_sql().to_string()
+    };
+    
+    // 处理表达式 (已经是 SQL 或调用了 create_table_sql())
+    ($expr:expr) => {
+        $expr.to_string()
     };
 }

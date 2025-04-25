@@ -7,14 +7,13 @@ mod tests {
     };
 
     // 重新定义用户模型
-    table! {
-        struct User {
-            #[autoincrement]
-            id: i32,
-            name: String,
-            age: i32,
-            email: Option<String>,
-        }
+    #[table]
+    struct User {
+        #[autoincrement]
+        id: i32,
+        name: String,
+        age: i32,
+        email: Option<String>,
     }
 
     // 创建测试数据库连接的辅助函数
