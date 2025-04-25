@@ -28,14 +28,13 @@ Table Definition
 use sqlited::table;
 
 // Define table structure using a macro
-table! {
-    User {
-        #[autoincrement]
-        id: i32,
-        name: String,
-        email: String,
-        age: i32,
-    }
+#[table]
+struct User {
+    #[autoincrement]
+    id: i32,
+    name: String,
+    email: String,
+    age: i32,
 }
 ```
 Creating a Connection
