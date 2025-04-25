@@ -7,6 +7,7 @@ use syn::punctuated::Punctuated;
 // 键值对结构
 struct KeyValue {
     key: Ident,
+    #[allow(dead_code)]
     // 冒号令牌可选，用于支持字段简写
     colon_token: Option<Token![:]>,
     // 值表达式

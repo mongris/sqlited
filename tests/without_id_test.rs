@@ -168,7 +168,7 @@ mod tests {
             |row| Ok((row.get::<_, String>(0)?, row.get::<_, i32>(1)?))
         ).unwrap()[0];
         
-        let (updated_name, updated_age) = updated_data;
+        let (_updated_name, _updated_age) = updated_data;
 
         db.execute("DELETE FROM user WHERE id = ?", &[&user_id]).unwrap();
         

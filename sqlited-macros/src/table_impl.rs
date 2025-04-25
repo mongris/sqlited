@@ -1,7 +1,7 @@
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
-use quote::{quote, ToTokens};
-use syn::{parenthesized, parse_macro_input, Attribute, Data, DeriveInput, Fields, LitStr, Meta, Token};
+use quote::quote;
+use syn::{parse_macro_input, Attribute, Data, DeriveInput, Fields, LitStr, Meta, Token};
 use syn::punctuated::Punctuated;
 use syn::token::Comma;
 
@@ -18,6 +18,7 @@ enum TableAttributeType {
 }
 
 /// 字段属性
+#[allow(dead_code)]
 struct FieldAttribute {
     name: syn::Ident,
     ty: syn::Type,
@@ -40,7 +41,7 @@ pub fn table(input: TokenStream) -> TokenStream {
     
     // 获取结构体名称
     let struct_name = &input.ident;
-    let struct_name_str = struct_name.to_string();
+    // let struct_name_str = struct_name.to_string();
     
     // 获取结构体字段
     let fields = match &input.data {
@@ -367,10 +368,10 @@ fn is_option_type(ty: &syn::Type) -> bool {
 }
 
 fn generate_create_table_sql(
-  struct_name: &syn::Ident,
-  fields: &Punctuated<syn::Field, Comma>,
-  table_attrs: &[TableAttribute],
-  field_attrs: &[FieldAttribute]
+    _struct_name: &syn::Ident,
+    fields: &Punctuated<syn::Field, Comma>,
+    table_attrs: &[TableAttribute],
+    field_attrs: &[FieldAttribute]
 ) -> TokenStream2 {
   let field_definitions = fields.iter().enumerate().map(|(i, field)| {
       let field_name = field.ident.as_ref().unwrap();

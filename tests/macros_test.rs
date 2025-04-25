@@ -22,7 +22,7 @@ mod tests {
         )?;
         
         // Try using the sql! macro with explicit parameter placeholders
-        let user_id = 1;
+        // let user_id = 1;
         // Use the format with explicit parameters - this works with our current macro
         // let query = sql!(SELECT * FROM user WHERE id = user_id);
         
