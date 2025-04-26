@@ -1,5 +1,5 @@
 use rusqlite::{
-    Error, Result,
+    Error,
     types::{ToSqlOutput, Value, ValueRef},
 };
 use std::fmt;
@@ -19,6 +19,9 @@ pub mod pool;
 pub mod savepoint;
 
 pub mod types;
+pub mod error;
+
+pub use error::{Result, SqlitedError};
 
 // #[cfg(test)]
 // mod macros_test;
@@ -99,7 +102,7 @@ impl<T: WithoutIdTableInfo> ValidateFields for T {
 /// This is inspired by the ToSql trait in rust-postgres but adapted for SQLite.
 pub trait ToSql: fmt::Debug {
     /// Converts this value into a SQLite value.
-    fn to_sql(&self) -> Result<ToSqlOutput<'_>>;
+    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>>;
 
     /// A reference to the SQL type of this value.
     fn sql_type(&self) -> rusqlite::types::Type;
@@ -141,7 +144,7 @@ impl<'a, T> ToSql for &'a T
 where
     T: ToSql + ?Sized,
 {
-    fn to_sql(&self) -> Result<ToSqlOutput<'_>> {
+    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
         (*self).to_sql()
     }
 
@@ -157,7 +160,7 @@ where
 // We implement ToSql for common Rust types below
 
 impl ToSql for bool {
-    fn to_sql(&self) -> Result<ToSqlOutput<'_>> {
+    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
         Ok(ToSqlOutput::from(*self as i64))
     }
 
@@ -167,7 +170,7 @@ impl ToSql for bool {
 }
 
 impl ToSql for i8 {
-    fn to_sql(&self) -> Result<ToSqlOutput<'_>> {
+    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
         Ok(ToSqlOutput::from(*self as i64))
     }
 
@@ -177,7 +180,7 @@ impl ToSql for i8 {
 }
 
 impl ToSql for i16 {
-    fn to_sql(&self) -> Result<ToSqlOutput<'_>> {
+    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
         Ok(ToSqlOutput::from(*self as i64))
     }
 
@@ -187,7 +190,7 @@ impl ToSql for i16 {
 }
 
 impl ToSql for i32 {
-    fn to_sql(&self) -> Result<ToSqlOutput<'_>> {
+    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
         Ok(ToSqlOutput::from(*self as i64))
     }
 
@@ -197,7 +200,7 @@ impl ToSql for i32 {
 }
 
 impl ToSql for i64 {
-    fn to_sql(&self) -> Result<ToSqlOutput<'_>> {
+    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
         Ok(ToSqlOutput::from(*self))
     }
 
@@ -207,7 +210,7 @@ impl ToSql for i64 {
 }
 
 impl ToSql for u8 {
-    fn to_sql(&self) -> Result<ToSqlOutput<'_>> {
+    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
         Ok(ToSqlOutput::from(*self as i64))
     }
 
@@ -217,7 +220,7 @@ impl ToSql for u8 {
 }
 
 impl ToSql for u16 {
-    fn to_sql(&self) -> Result<ToSqlOutput<'_>> {
+    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
         Ok(ToSqlOutput::from(*self as i64))
     }
 
@@ -227,7 +230,7 @@ impl ToSql for u16 {
 }
 
 impl ToSql for u32 {
-    fn to_sql(&self) -> Result<ToSqlOutput<'_>> {
+    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
         if *self > i64::MAX as u32 {
             return Err(Error::ToSqlConversionFailure(Box::new(
                 std::io::Error::new(std::io::ErrorKind::Other, "u32 value out of range for i64"),
@@ -242,7 +245,7 @@ impl ToSql for u32 {
 }
 
 impl ToSql for f32 {
-    fn to_sql(&self) -> Result<ToSqlOutput<'_>> {
+    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
         Ok(ToSqlOutput::from(*self as f64))
     }
 
@@ -252,7 +255,7 @@ impl ToSql for f32 {
 }
 
 impl ToSql for f64 {
-    fn to_sql(&self) -> Result<ToSqlOutput<'_>> {
+    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
         Ok(ToSqlOutput::from(*self))
     }
 
@@ -262,7 +265,7 @@ impl ToSql for f64 {
 }
 
 impl ToSql for str {
-    fn to_sql(&self) -> Result<ToSqlOutput<'_>> {
+    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
         Ok(ToSqlOutput::from(self))
     }
 
@@ -272,7 +275,7 @@ impl ToSql for str {
 }
 
 impl ToSql for String {
-    fn to_sql(&self) -> Result<ToSqlOutput<'_>> {
+    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
         Ok(ToSqlOutput::from(self.as_str()))
     }
 
@@ -282,7 +285,7 @@ impl ToSql for String {
 }
 
 impl ToSql for Vec<u8> {
-    fn to_sql(&self) -> Result<ToSqlOutput<'_>> {
+    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
         Ok(ToSqlOutput::from(self.as_slice()))
     }
 
@@ -292,7 +295,7 @@ impl ToSql for Vec<u8> {
 }
 
 impl ToSql for [u8] {
-    fn to_sql(&self) -> Result<ToSqlOutput<'_>> {
+    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
         Ok(ToSqlOutput::from(self))
     }
 
@@ -302,7 +305,7 @@ impl ToSql for [u8] {
 }
 
 impl<T: ToSql> ToSql for Option<T> {
-    fn to_sql(&self) -> Result<ToSqlOutput<'_>> {
+    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
         match *self {
             Some(ref value) => value.to_sql(),
             None => Ok(ToSqlOutput::from(&Value::Null)),

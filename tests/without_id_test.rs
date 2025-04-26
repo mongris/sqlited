@@ -296,7 +296,7 @@ mod tests {
             assert_eq!(count, 2);
             
             // 故意返回错误以回滚事务
-            Err::<i32, _>(rusqlite::Error::StatementChangedRows(0))
+            Err::<(), _>(sqlited::SqlitedError::from(rusqlite::Error::StatementChangedRows(0)))
         }).unwrap_err(); // 我们期望事务失败
         
         // 验证用户表是空的（事务已回滚）
