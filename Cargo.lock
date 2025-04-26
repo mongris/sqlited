@@ -448,7 +448,7 @@ dependencies = [
 
 [[package]]
 name = "sqlited"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "bincode",
  "chrono",
@@ -460,6 +460,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sqlited-macros",
+ "syn",
  "thiserror",
  "triomphe",
  "uuid",
@@ -467,7 +468,7 @@ dependencies = [
 
 [[package]]
 name = "sqlited-macros"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "proc-macro2",
  "quote",

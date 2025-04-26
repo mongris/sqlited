@@ -9,12 +9,28 @@ use syn::token::Comma;
 struct TableAttribute {
     attr_type: TableAttributeType,
     value: Vec<String>,
+    migration_type: Option<MigrationType>,
 }
 
+/// 表级属性类型
 enum TableAttributeType {
     Constraint,
     Index,
     UniqueIndex,
+    Migration,
+}
+
+/// 迁移操作类型
+enum MigrationType {
+    AddColumn,
+    RenameColumn,
+    ModifyColumn,
+    DropColumn,
+    // AddConstraint,
+    // DropConstraint,
+    AddIndex,
+    DropIndex,
+    Custom,  // 自定义SQL迁移
 }
 
 /// 字段属性
@@ -94,7 +110,47 @@ fn process_table_attributes(attrs: &[Attribute]) -> Vec<TableAttribute> {
             // println!("Processing attribute: {}", attr_name);
 
 
-            if attr_name == "constraint" {
+            if attr_name == "migration" {
+                // 解析 migration 属性参数
+                match &attr.meta {
+                    Meta::List(list) => {
+                        if let Ok(args) = list.parse_args_with(
+                            Punctuated::<LitStr, Token![,]>::parse_terminated
+                        ) {
+                            if !args.is_empty() {
+                                let migration_type_str = args[0].value();
+                                
+                                // 确定迁移类型
+                                let migration_type = match migration_type_str.as_str() {
+                                    "add_column" => MigrationType::AddColumn,
+                                    "rename_column" => MigrationType::RenameColumn,
+                                    "modify_column" => MigrationType::ModifyColumn, 
+                                    "drop_column" => MigrationType::DropColumn,
+                                    // "add_constraint" => MigrationType::AddConstraint,
+                                    // "drop_constraint" => MigrationType::DropConstraint,
+                                    "add_index" => MigrationType::AddIndex,
+                                    "drop_index" => MigrationType::DropIndex,
+                                    "custom" => MigrationType::Custom,
+                                    _ => MigrationType::Custom,
+                                };
+                                
+                                // 收集参数
+                                let values = args.iter()
+                                                .skip(1)
+                                                .map(|arg| arg.value())
+                                                .collect();
+                                
+                                table_attrs.push(TableAttribute {
+                                    attr_type: TableAttributeType::Migration,
+                                    value: values,
+                                    migration_type: Some(migration_type),
+                                });
+                            }
+                        }
+                    },
+                    _ => panic!("Incorrect format for using the `migration` attribute."),
+                }
+            } else if attr_name == "constraint" {
                 // 处理表级约束
                 match &attr.meta {
                     Meta::List(list) => {
@@ -103,6 +159,7 @@ fn process_table_attributes(attrs: &[Attribute]) -> Vec<TableAttribute> {
                             table_attrs.push(TableAttribute {
                                 attr_type: TableAttributeType::Constraint,
                                 value: vec![lit.value()],
+                                migration_type: None,
                             });
                         }
                     },
@@ -120,6 +177,7 @@ fn process_table_attributes(attrs: &[Attribute]) -> Vec<TableAttribute> {
                                 table_attrs.push(TableAttribute {
                                     attr_type: TableAttributeType::Index,
                                     value: vec![idx_name, idx_columns],
+                                    migration_type: None,
                                 });
                             }
                         }
@@ -138,6 +196,7 @@ fn process_table_attributes(attrs: &[Attribute]) -> Vec<TableAttribute> {
                                 table_attrs.push(TableAttribute {
                                     attr_type: TableAttributeType::UniqueIndex,
                                     value: vec![idx_name, idx_columns],
+                                    migration_type: None,
                                 });
                             }
                         }
@@ -253,16 +312,19 @@ fn generate_table_impl(
     let create_table_sql_impl = generate_create_table_sql(struct_name, fields, table_attrs, field_attrs);
 
     let field_defs = fields.iter().map(|f| {
-      let name = &f.ident;
-      let ty = &f.ty;
-      quote! { pub #name: #ty }
-  });
-  
-  let field_defaults = fields.iter().map(|f| {
-      let name = &f.ident;
-      let ty = &f.ty;
-      quote! { #name: <#ty>::default() }
-  });
+        let name = &f.ident;
+        let ty = &f.ty;
+        quote! { pub #name: #ty }
+    });
+    
+    let field_defaults = fields.iter().map(|f| {
+        let name = &f.ident;
+        let ty = &f.ty;
+        quote! { #name: <#ty>::default() }
+    });
+
+    // 生成迁移SQL
+    let migration_impls = generate_migration_impls(struct_name, table_attrs, field_attrs);
     
     // 生成最终的实现
     quote! {
@@ -285,57 +347,37 @@ fn generate_table_impl(
             #field_types_impl
             #create_table_sql_impl
         }
+
+        #migration_impls
     }.into()
 }
 
-// 添加以下函数
-
+/// 生成表名实现代码
 fn generate_table_name(struct_name: &syn::Ident) -> TokenStream2 {
-    let struct_name_str = struct_name.to_string();
+    let snake_case_name = get_table_name(struct_name);
+    
     quote! {
         fn table_name() -> &'static str {
-            static TABLE_NAME: &str = #struct_name_str;
-            use std::sync::LazyLock;
-            static SNAKE_NAME: LazyLock<String> = LazyLock::new(|| {
-                // 将驼峰命名法转换为蛇形命名法
-                let mut result = String::new();
-                let chars: Vec<char> = TABLE_NAME.chars().collect();
-                
-                for (i, &c) in chars.iter().enumerate() {
-                    if c.is_uppercase() {
-                        // 不是首字母且是大写，添加下划线
-                        if i > 0 {
-                            result.push('_');
-                        }
-                        result.push(c.to_lowercase().next().unwrap());
-                    } else {
-                        result.push(c);
-                    }
-                }
-                
-                result.to_lowercase()
-            });
-            
-            // 泄露一次字符串，使其具有 'static 生命周期
-            Box::leak(SNAKE_NAME.clone().into_boxed_str())
+            // 直接使用编译时计算的表名
+            #snake_case_name
         }
     }
 }
 
 fn generate_field_names(fields: &Punctuated<syn::Field, Comma>) -> TokenStream2 {
-  let field_names = fields.iter().map(|field| {
-      let field_name = &field.ident;
-      let field_name_str = field_name.as_ref().unwrap().to_string();
-      quote! { #field_name_str }
-  });
-  
-  quote! {
-      fn field_names() -> Vec<&'static str> {
-          vec![
-              #(#field_names),*
-          ]
-      }
-  }
+    let field_names = fields.iter().map(|field| {
+        let field_name = &field.ident;
+        let field_name_str = field_name.as_ref().unwrap().to_string();
+        quote! { #field_name_str }
+    });
+    
+    quote! {
+        fn field_names() -> Vec<&'static str> {
+            vec![
+                #(#field_names),*
+            ]
+        }
+    }
 }
 
 fn generate_field_types(fields: &Punctuated<syn::Field, Comma>) -> TokenStream2 {
@@ -358,6 +400,493 @@ fn generate_field_types(fields: &Punctuated<syn::Field, Comma>) -> TokenStream2 
   }
 }
 
+fn generate_migration_impls(
+    struct_name: &syn::Ident,
+    table_attrs: &[TableAttribute],
+    field_attrs: &[FieldAttribute],
+) -> TokenStream2 {
+    let table_name = get_table_name(struct_name);
+    let migration_methods = generate_migration_methods(table_name.as_str(), table_attrs, field_attrs);
+    
+    quote! {
+        impl #struct_name {
+            /// 获取此表的所有迁移SQL语句
+            pub fn get_migrations() -> Vec<(String, String, Option<String>)> {
+                vec![
+                    #(#migration_methods),*
+                ]
+            }
+        }
+    }
+}
+
+/// 生成每个迁移的方法
+fn generate_migration_methods(
+    table_name: &str, 
+    table_attrs: &[TableAttribute],
+    field_attrs: &[FieldAttribute],
+) -> Vec<TokenStream2> {
+    let mut methods = Vec::new();
+    
+    for attr in table_attrs {
+        if let TableAttributeType::Migration = attr.attr_type {
+            if let Some(migration_type) = &attr.migration_type {
+                let method = match migration_type {
+                    MigrationType::AddColumn => {
+                        generate_add_column_migration(table_name, &attr.value, field_attrs)
+                    },
+                    MigrationType::RenameColumn => {
+                        generate_rename_column_migration(table_name, &attr.value)
+                    },
+                    MigrationType::ModifyColumn => {
+                        generate_modify_column_migration(table_name, &attr.value, field_attrs)
+                    },
+                    MigrationType::DropColumn => {
+                        generate_drop_column_migration(table_name, &attr.value)
+                    },
+                    // MigrationType::AddConstraint => {
+                    //     generate_add_constraint_migration(table_name, &attr.value)
+                    // },
+                    // MigrationType::DropConstraint => {
+                    //     generate_drop_constraint_migration(table_name, &attr.value)
+                    // },
+                    MigrationType::AddIndex => {
+                        generate_add_index_migration(table_name, &attr.value)
+                    },
+                    MigrationType::DropIndex => {
+                        generate_drop_index_migration(table_name, &attr.value)
+                    },
+                    MigrationType::Custom => {
+                        generate_custom_migration(&attr.value)
+                    }
+                };
+                
+                methods.push(method);
+            }
+        }
+    }
+    
+    methods
+}
+
+/// 生成添加列的迁移
+fn generate_add_column_migration(
+    table_name: &str,
+    args: &[String],
+    field_attrs: &[FieldAttribute],
+) -> TokenStream2 {
+    if args.is_empty() {
+        return quote! {
+            (
+                "error".to_string(),
+                "Migration add_column requires at least one argument".to_string(),
+                None
+            )
+        };
+    }
+    
+    let column_name = &args[0];
+    
+    // 查找字段定义
+    if let Some(field) = field_attrs.iter().find(|f| f.name.to_string() == *column_name) {
+        // 获取字段类型和约束
+        let field_type = get_sql_type(&field.ty);
+        let mut constraints = Vec::new();
+        
+        // 添加各种约束
+        if field.is_not_null {
+            constraints.push("NOT NULL".to_string());
+        }
+        
+        if field.is_unique {
+            constraints.push("UNIQUE".to_string());
+        }
+        
+        if let Some(check) = &field.check_constraint {
+            constraints.push(format!("CHECK ({})", check));
+        }
+        
+        if let Some(default) = &field.default_value {
+            constraints.push(format!("DEFAULT {}", default));
+        }
+        
+        let constraints_str = constraints.join(" ");
+        
+        // 生成ALTER TABLE语句
+        let alter_sql = format!(
+            "ALTER TABLE {} ADD COLUMN {} {} {}", 
+            table_name, column_name, field_type, constraints_str
+        );
+        
+        // 生成可能的回滚语句
+        let down_sql = if let Some(sqlite_version) = get_sqlite_version() {
+            // SQLite 3.35.0+ 支持DROP COLUMN
+            if sqlite_version >= (3, 35, 0) {
+                quote! {
+                    Some(format!("ALTER TABLE {} DROP COLUMN {}", #table_name, #column_name).to_string())
+                }
+            } else {
+                quote! { None }
+            }
+        } else {
+            quote! { None }
+        };
+        
+        quote! {
+            (
+                format!("migration_{}_add_{}", #table_name, #column_name),
+                #alter_sql.to_string(),
+                #down_sql
+            )
+        }
+    } else {
+        quote! {
+            (
+                "error".to_string(),
+                format!("Column {} not found in struct definition", #column_name),
+                None
+            )
+        }
+    }
+}
+
+/// 生成重命名列的迁移
+fn generate_rename_column_migration(
+    table_name: &str,
+    args: &[String],
+) -> TokenStream2 {
+    if args.len() < 2 {
+        return quote! {
+            (
+                "error".to_string(),
+                "Migration rename_column requires old_name and new_name".to_string(),
+                None
+            )
+        };
+    }
+    
+    let old_name = &args[0];
+    let new_name = &args[1];
+    
+    // SQLite 3.25.0+ 支持 RENAME COLUMN
+    let alter_sql = format!(
+        "ALTER TABLE {} RENAME COLUMN {} TO {}", 
+        table_name, old_name, new_name
+    );
+    
+    let down_sql = format!(
+        "ALTER TABLE {} RENAME COLUMN {} TO {}", 
+        table_name, new_name, old_name
+    );
+    
+    quote! {
+        (
+            format!("migration_{}_rename_{}_to_{}", #table_name, #old_name, #new_name),
+            #alter_sql.to_string(),
+            Some(#down_sql.to_string())
+        )
+    }
+}
+
+/// 生成修改列类型的迁移（使用SQLite 3.35.0+特性）
+fn generate_modify_column_migration(
+    table_name: &str,
+    args: &[String],
+    field_attrs: &[FieldAttribute],
+) -> TokenStream2 {
+    if args.is_empty() {
+        return quote! {
+            (
+                "error".to_string(),
+                "Migration modify_column requires column name".to_string(),
+                None
+            )
+        };
+    }
+    
+    let column_name = &args[0];
+    
+    // 查找字段定义
+    if let Some(field) = field_attrs.iter().find(|f| f.name.to_string() == *column_name) {
+        // 获取字段类型和约束
+        let field_type = get_sql_type(&field.ty);
+        let mut constraints = Vec::new();
+        
+        // 添加各种约束
+        if field.is_not_null {
+            constraints.push("NOT NULL".to_string());
+        }
+        
+        if field.is_unique {
+            constraints.push("UNIQUE".to_string());
+        }
+        
+        if let Some(check) = &field.check_constraint {
+            constraints.push(format!("CHECK ({})", check));
+        }
+        
+        if let Some(default) = &field.default_value {
+            constraints.push(format!("DEFAULT {}", default));
+        }
+        
+        let constraints_str = constraints.join(" ");
+        
+        // 使用临时列名
+        let temp_column = format!("{}_new", column_name);
+
+        // 检查目标类型是否为布尔
+        let is_bool_type = field_type.to_lowercase() == "integer" && is_bool_type(&field.ty);
+
+        // 根据类型使用不同的转换逻辑
+        let conversion_expr = if is_bool_type {
+            format!("CASE WHEN LOWER({}) IN ('1', 'true', 'yes', 'on', 't', 'y') THEN 1 ELSE 0 END", column_name)
+        } else {
+            format!("CAST({} AS {})", column_name, field_type)
+        };
+        
+        // 构建四步迁移过程（适用于SQLite 3.35.0+）
+        let expr = format!(
+            "-- SQLite 3.35.0+ column type modification using ADD+DROP+RENAME\n\
+             PRAGMA foreign_keys=off;\n\
+             \n\
+             -- Step 1: Add a new column with the desired type\n\
+             ALTER TABLE {} ADD COLUMN {} {} {};\n\
+             \n\
+             -- Step 2: Copy data with type conversion\n\
+             UPDATE {} SET {} = {};\n\
+             \n\
+             -- Step 3: Drop the old column\n\
+             ALTER TABLE {} DROP COLUMN {};\n\
+             \n\
+             -- Step 4: Rename the new column to the original name\n\
+             ALTER TABLE {} RENAME COLUMN {} TO {};\n\
+             \n\
+             PRAGMA foreign_keys=on;",
+            table_name, temp_column, field_type, constraints_str,
+            table_name, temp_column, conversion_expr,
+            table_name, column_name,
+            table_name, temp_column, column_name
+        );
+        
+        quote! {
+            (
+                format!("migration_{}_modify_{}", #table_name, #column_name),
+                #expr.to_string(),
+                None // 复杂迁移无法提供回滚
+            )
+        }
+    } else {
+        quote! {
+            (
+                "error".to_string(),
+                format!("Column {} not found in struct definition", #column_name),
+                None
+            )
+        }
+    }
+}
+
+// 辅助函数：检查类型是否为布尔类型
+fn is_bool_type(ty: &syn::Type) -> bool {
+    let type_str = quote! { #ty }.to_string().replace(" ", "");
+    type_str.contains("bool")
+}
+
+/// 生成删除列的迁移
+fn generate_drop_column_migration(
+    table_name: &str,
+    args: &[String],
+) -> TokenStream2 {
+    if args.is_empty() {
+        return quote! {
+            (
+                "error".to_string(),
+                "Migration drop_column requires column name".to_string(),
+                None
+            )
+        };
+    }
+    
+    let column_name = &args[0];
+    
+    // SQLite 3.35.0+ 支持 DROP COLUMN
+    let alter_sql = format!("ALTER TABLE {} DROP COLUMN {}", table_name, column_name);
+    
+    quote! {
+        (
+            format!("migration_{}_drop_{}", #table_name, #column_name),
+            #alter_sql.to_string(),
+            None // 删除的列无法恢复，不提供回滚
+        )
+    }
+}
+
+/// 生成添加约束的迁移
+// fn generate_add_constraint_migration(
+//     table_name: &str,
+//     args: &[String],
+// ) -> TokenStream2 {
+//     if args.len() < 2 {
+//         return quote! {
+//             (
+//                 "error".to_string(),
+//                 "Migration add_constraint requires constraint name and definition".to_string(),
+//                 None
+//             )
+//         };
+//     }
+    
+//     let constraint_name = &args[0];
+//     let constraint_def = &args[1];
+    
+//     let alter_sql = format!(
+//         "ALTER TABLE {} ADD CONSTRAINT {} {}", 
+//         table_name, constraint_name, constraint_def
+//     );
+    
+//     let down_sql = format!(
+//         "ALTER TABLE {} DROP CONSTRAINT {}", 
+//         table_name, constraint_name
+//     );
+    
+//     quote! {
+//         (
+//             format!("migration_{}_add_constraint_{}", #table_name, #constraint_name),
+//             #alter_sql.to_string(),
+//             Some(#down_sql.to_string())
+//         )
+//     }
+// }
+
+/// 生成删除约束的迁移
+// fn generate_drop_constraint_migration(
+//     table_name: &str,
+//     args: &[String],
+// ) -> TokenStream2 {
+//     if args.is_empty() {
+//         return quote! {
+//             (
+//                 "error".to_string(),
+//                 "Migration drop_constraint requires constraint name".to_string(),
+//                 None
+//             )
+//         };
+//     }
+    
+//     let constraint_name = &args[0];
+    
+//     let alter_sql = format!("ALTER TABLE {} DROP CONSTRAINT {}", table_name, constraint_name);
+    
+//     quote! {
+//         (
+//             format!("migration_{}_drop_constraint_{}", #table_name, #constraint_name),
+//             #alter_sql.to_string(),
+//             None // 约束定义未保存，不提供回滚
+//         )
+//     }
+// }
+
+/// 生成添加索引的迁移
+fn generate_add_index_migration(
+    table_name: &str,
+    args: &[String],
+) -> TokenStream2 {
+    if args.len() < 2 {
+        return quote! {
+            (
+                "error".to_string(),
+                "Migration add_index requires index name and column(s)".to_string(),
+                None
+            )
+        };
+    }
+    
+    let index_name = &args[0];
+    let columns = &args[1];
+    let is_unique = args.len() >= 3 && args[2].to_uppercase() == "UNIQUE";
+    
+    let create_sql = if is_unique {
+        format!("CREATE UNIQUE INDEX {} ON {} ({})", index_name, table_name, columns)
+    } else {
+        format!("CREATE INDEX {} ON {} ({})", index_name, table_name, columns)
+    };
+    
+    let down_sql = format!("DROP INDEX {}", index_name);
+    
+    quote! {
+        (
+            format!("migration_{}_add_index_{}", #table_name, #index_name),
+            #create_sql.to_string(),
+            Some(#down_sql.to_string())
+        )
+    }
+}
+
+/// 生成删除索引的迁移
+fn generate_drop_index_migration(
+    table_name: &str,
+    args: &[String],
+) -> TokenStream2 {
+    if args.is_empty() {
+        return quote! {
+            (
+                "error".to_string(),
+                "Migration drop_index requires index name".to_string(),
+                None
+            )
+        };
+    }
+    
+    let index_name = &args[0];
+    
+    let drop_sql = format!("DROP INDEX {}", index_name);
+    
+    quote! {
+        (
+            format!("migration_{}_drop_index_{}", #table_name, #index_name),
+            #drop_sql.to_string(),
+            None // 索引定义未保存，不提供回滚
+        )
+    }
+}
+
+/// 生成自定义迁移
+fn generate_custom_migration(args: &[String]) -> TokenStream2 {
+    if args.len() < 2 {
+        return quote! {
+            (
+                "error".to_string(),
+                "Migration custom requires name and SQL statement".to_string(),
+                None
+            )
+        };
+    }
+    
+    let name = &args[0];
+    let sql = &args[1];
+    let down_sql = if args.len() >= 3 {
+        let args2 = &args[2];
+        quote! { Some(#args2.to_string()) }
+    } else {
+        quote! { None }
+    };
+    
+    quote! {
+        (
+            #name.to_string(),
+            #sql.to_string(),
+            #down_sql
+        )
+    }
+}
+
+/// 获取SQLite版本（编译时）
+fn get_sqlite_version() -> Option<(u32, u32, u32)> {
+    // 这里我们返回一个假设的版本，实际实现可能需要更复杂的逻辑
+    // 例如从环境变量或编译标志中获取
+    Some((3, 35, 0))
+}
+
 fn is_option_type(ty: &syn::Type) -> bool {
     if let syn::Type::Path(type_path) = ty {
         if let Some(segment) = type_path.path.segments.last() {
@@ -365,6 +894,78 @@ fn is_option_type(ty: &syn::Type) -> bool {
         }
     }
     false
+}
+
+/// 从 Rust 类型获取 SQLite 类型
+fn get_sql_type(ty: &syn::Type) -> String {
+    let type_str = quote! { #ty }.to_string();
+    
+    // 移除空格和可能的包装类型
+    let type_str = type_str.replace(" ", "");
+    
+    // 对常见类型进行映射
+    if type_str.contains("String") || type_str.contains("str") {
+        "TEXT".to_string()
+    } else if type_str.contains("i32") || type_str.contains("i16") || type_str.contains("i8") 
+          || type_str.contains("u32") || type_str.contains("u16") || type_str.contains("u8") {
+        "INTEGER".to_string()
+    } else if type_str.contains("i64") || type_str.contains("u64") {
+        "INTEGER".to_string()
+    } else if type_str.contains("f32") || type_str.contains("f64") {
+        "REAL".to_string()
+    } else if type_str.contains("bool") {
+        "INTEGER".to_string()  // SQLite没有布尔类型，使用INTEGER
+    } else if type_str.contains("Vec<u8>") || type_str.contains("&[u8]") {
+        "BLOB".to_string()
+    } else if type_str.contains("UtcDateTime") {
+        "TEXT".to_string()  // 日期时间类型存储为TEXT
+    } else if type_str.contains("Timestamp") {
+        "INTEGER".to_string()  // 时间戳存储为INTEGER
+    } else if type_str.contains("Option<") {
+        // 处理Option类型，递归获取内部类型
+        if let syn::Type::Path(type_path) = ty {
+            if let Some(segment) = type_path.path.segments.last() {
+                if segment.ident == "Option" {
+                    if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
+                        if let Some(arg) = args.args.first() {
+                            if let syn::GenericArgument::Type(inner_type) = arg {
+                                return get_sql_type(inner_type);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // 默认处理为TEXT
+        "TEXT".to_string()
+    } else {
+        // 对于自定义类型，默认处理为TEXT
+        // 也可以考虑在这里添加更多的自定义类型映射
+        "TEXT".to_string()
+    }
+}
+
+/// 获取表名（蛇形命名法）
+fn get_table_name(struct_name: &syn::Ident) -> String {
+    let struct_name_str = struct_name.to_string();
+    
+    // 将驼峰命名转换为蛇形命名
+    let mut result = String::new();
+    let chars: Vec<char> = struct_name_str.chars().collect();
+    
+    for (i, &c) in chars.iter().enumerate() {
+        if c.is_uppercase() {
+            // 不是首字母且是大写，添加下划线
+            if i > 0 {
+                result.push('_');
+            }
+            result.push(c.to_lowercase().next().unwrap());
+        } else {
+            result.push(c);
+        }
+    }
+    
+    result.to_lowercase()
 }
 
 fn generate_create_table_sql(

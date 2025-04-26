@@ -1,4 +1,5 @@
 use crate::connection::SqliteConnection;
+use crate::error::{Result, SqlitedError};
 use std::sync::{LazyLock, Mutex, Arc};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -29,7 +30,7 @@ impl SqlQuery {
     }
 
     /// Execute the query on the provided connection
-    pub fn execute(&self, conn: &SqliteConnection) -> rusqlite::Result<usize> {
+    pub fn execute(&self, conn: &SqliteConnection) -> Result<usize> {
         let param_refs: Vec<&dyn rusqlite::ToSql> = self
             .params
             .iter()
@@ -39,7 +40,7 @@ impl SqlQuery {
     }
 
     /// Query multiple rows and map each to a value using the provided function
-    pub fn query_map<T, F>(&self, conn: &SqliteConnection, f: F) -> rusqlite::Result<Vec<T>>
+    pub fn query_map<T, F>(&self, conn: &SqliteConnection, f: F) -> Result<Vec<T>>
     where
         F: FnMut(&rusqlite::Row<'_>) -> rusqlite::Result<T>,
     {
@@ -48,13 +49,16 @@ impl SqlQuery {
             .params
             .iter()
             .map(|p| p.as_ref() as &dyn rusqlite::ToSql)
-            .collect();
+            .collect();        
+        // query_map returns rusqlite::Result, ? converts it to SqlitedError via From
         let rows = stmt.query_map(param_refs.as_slice(), f)?;
-        rows.collect()
+        // collect returns rusqlite::Result<Vec<T>>, map_err converts the error via From
+        // Add turbofish annotation to help type inference
+        rows.collect::<rusqlite::Result<Vec<T>>>().map_err(SqlitedError::from)
     }
 
     /// Query a single row and map it to a value using the provided function
-    pub fn query_row<T, F>(&self, conn: &SqliteConnection, f: F) -> rusqlite::Result<T>
+    pub fn query_row<T, F>(&self, conn: &SqliteConnection, f: F) -> Result<T>
     where
         F: FnOnce(&rusqlite::Row<'_>) -> rusqlite::Result<T>,
     {
@@ -64,7 +68,7 @@ impl SqlQuery {
             .iter()
             .map(|p| p.as_ref() as &dyn rusqlite::ToSql)
             .collect();
-        stmt.query_row(param_refs.as_slice(), f)
+        stmt.query_row(param_refs.as_slice(), f).map_err(SqlitedError::from)
     }
 }
 
@@ -332,7 +336,7 @@ pub trait SqliteBindableValue {
     fn to_sql_value(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>>;
     
     /// 从 SQLite 值转换为此类型
-    fn from_sql_value(value: rusqlite::types::ValueRef<'_>) -> Result<Self, rusqlite::types::FromSqlError> where Self: Sized;
+    fn from_sql_value(value: rusqlite::types::ValueRef<'_>) -> rusqlite::Result<Self, rusqlite::types::FromSqlError> where Self: Sized;
     
     /// 返回此类型在 SQLite 中的类型名称
     fn sqlite_type_name() -> &'static str {
@@ -352,7 +356,7 @@ impl<T: SqliteBindableValue + Default + Clone + std::fmt::Debug> Default for Sql
 
 // 为包装器类型实现 FromSql
 impl<T: SqliteBindableValue + Default + Clone + std::fmt::Debug> rusqlite::types::FromSql for SqliteCustomType<T> {
-    fn column_result(value: rusqlite::types::ValueRef<'_>) -> Result<Self, rusqlite::types::FromSqlError> {
+    fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::Result<Self, rusqlite::types::FromSqlError> {
         T::from_sql_value(value).map(SqliteCustomType)
     }
 }
@@ -854,6 +858,33 @@ impl<T: rusqlite::ToSql + Clone + 'static> ToSqlClone for T {
 pub static CONNECTION_POOLS: LazyLock<Mutex<HashMap<PathBuf, Arc<ConnectionPool>>>> = 
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
+// 在宏中添加这个函数来替代原来的MD5计算
+pub fn get_statement_key(statement: &str) -> String {
+    let statement = statement.trim().to_lowercase();
+    
+    // 检测是否是CREATE TABLE语句
+    if statement.starts_with("create table") {
+        // 提取表名
+        let parts: Vec<&str> = statement.split_whitespace().collect();
+        if parts.len() >= 3 {
+            let mut table_name = parts[2];
+            // 处理"IF NOT EXISTS"
+            if table_name == "if" && parts.len() >= 6 {
+                table_name = parts[5];
+            }
+            
+            // 移除引号
+            table_name = table_name.trim_matches(|c| c == '"' || c == '`' || c == '\'');
+            
+            // 使用表名作为哈希键的一部分
+            return format!("create_table:{}", table_name);
+        }
+    }
+    
+    // 对其他SQL语句使用完整哈希
+    format!("sql:{:x}", md5::compute(statement))
+}
+
 /// 定义数据库结构、表和迁移
 ///
 /// 此宏允许以多种方式定义数据库：
@@ -930,6 +961,20 @@ macro_rules! define_db {
             pub fn raw_connection(&self) -> &$crate::connection::SqliteConnection {
                 &self.conn
             }
+
+            // 获取表的所有迁移
+            fn get_all_table_migrations() -> Vec<(String, String, Option<String>)> {
+                let mut migrations = Vec::new();
+                
+                // 收集所有表的迁移
+                $(
+                    if let Some(table_migrations) = $crate::_collect_table_migrations!($element) {
+                        migrations.extend(table_migrations);
+                    }
+                )*
+                
+                migrations
+            }
             
             // 返回迁移列表
             fn get_migrations() -> Vec<String> {
@@ -941,7 +986,7 @@ macro_rules! define_db {
             }
             
             // 应用迁移到此数据库
-            pub fn apply_migrations(&self) -> rusqlite::Result<()> {
+            pub fn apply_migrations(&self) -> $crate::error::Result<()> {
                 // 创建迁移表（如果不存在）
                 self.conn.execute(
                     "CREATE TABLE IF NOT EXISTS _sqlited_migrations (
@@ -951,52 +996,107 @@ macro_rules! define_db {
                     )",
                     [],
                 )?;
+
+                // 获取所有表定义的迁移
+                let table_migrations = Self::get_all_table_migrations();
                 
                 // 应用事务确保迁移的原子性
                 self.conn.execute("BEGIN TRANSACTION", [])?;
                 
                 let mut success = true;
-                // 按顺序应用所有迁移
-                for migration in Self::get_migrations() {
-                    // 按分号拆分多个 SQL 语句
-                    let statements = migration.split(';')
-                        .map(|s| s.trim())
-                        .filter(|s| !s.is_empty())
-                        .collect::<Vec<_>>();
+
+                // 首先应用表迁移
+                for (name, up_sql, _) in table_migrations {
+                    let already_applied = self.conn.query_row(
+                        "SELECT COUNT(*) FROM _sqlited_migrations WHERE name = ?",
+                        [&name],
+                        |row| row.get::<_, i32>(0),
+                    ).unwrap_or(0) > 0;
                     
-                    for statement in &statements {
-                        if statement.is_empty() {
-                            continue;
-                        }
+                    if !already_applied {
+                        // 按分号拆分多个 SQL 语句
+                        let statements = up_sql.split(';')
+                            .map(|s| s.trim())
+                            .filter(|s| !s.is_empty())
+                            .collect::<Vec<_>>();
                         
-                        // 对每条语句单独应用迁移逻辑
-                        let statement_hash = format!("{:x}", md5::compute(statement));
-                        let already_applied = self.conn.query_row(
-                            "SELECT COUNT(*) FROM _sqlited_migrations WHERE name = ?",
-                            [&statement_hash],
-                            |row| row.get::<_, i32>(0),
-                        ).unwrap_or(0) > 0;
-                        
-                        if !already_applied {
+                        for statement in &statements {
                             match self.conn.execute(statement, []) {
-                                Ok(_) => {
-                                    // 记录已应用的迁移
-                                    if let Err(e) = self.conn.execute(
-                                        "INSERT INTO _sqlited_migrations (name) VALUES (?)",
-                                        [&statement_hash],
-                                    ) {
-                                        eprintln!("Failed to record migration: {}", e);
-                                        success = false;
-                                        break;
-                                    }
-                                },
+                                Ok(_) => {},
                                 Err(e) => {
-                                    eprintln!("Failed to apply migration: {}", e);
+                                    eprintln!("Failed to apply migration {}: {}", name, e);
                                     success = false;
                                     break;
                                 }
                             }
                         }
+                        
+                        // 记录已应用的迁移
+                        if success {
+                            if let Err(e) = self.conn.execute(
+                                "INSERT INTO _sqlited_migrations (name) VALUES (?)",
+                                [&name],
+                            ) {
+                                eprintln!("Failed to record migration {}: {}", name, e);
+                                success = false;
+                            }
+                        }
+                    }
+                    
+                    if !success {
+                        break;
+                    }
+                }
+
+                // 按顺序应用其他SQL迁移
+                if success {
+                    for migration in Self::get_migrations() {
+                        // 按分号拆分多个 SQL 语句
+                        let statements = migration.split(';')
+                            .map(|s| s.trim())
+                            .filter(|s| !s.is_empty())
+                            .collect::<Vec<_>>();
+                        
+                        for statement in &statements {
+                            if statement.is_empty() {
+                                continue;
+                            }
+                            
+                            // 对每条语句单独应用迁移逻辑
+                            let statement_hash = get_statement_key(statement);
+
+                            // query_row now returns crate::error::Result, use ?
+                            let count = self.conn.query_row(
+                                "SELECT COUNT(*) FROM _sqlited_migrations WHERE name = ?",
+                                [&statement_hash],
+                                |row| row.get::<_, i32>(0),
+                            ).unwrap_or(0); // Keep unwrap_or(0) as fallback if query fails finding row
+
+                            let already_applied = count > 0;
+                            
+                            if !already_applied {
+                                match self.conn.execute(statement, []) {
+                                    Ok(_) => {
+                                        // 记录已应用的迁移
+                                        if let Err(e) = self.conn.execute(
+                                            "INSERT INTO _sqlited_migrations (name) VALUES (?)",
+                                            [&statement_hash],
+                                        ) {
+                                            eprintln!("Failed to record migration: {}", e);
+                                            success = false;
+                                            break;
+                                        }
+                                    },
+                                    Err(e) => {
+                                        eprintln!("Failed to apply migration: {}", e);
+                                        success = false;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+
+                        if !success { break; } // Exit outer loop on failure
                     }
                 }
                 
@@ -1004,41 +1104,44 @@ macro_rules! define_db {
                 if success {
                     self.conn.execute("COMMIT", [])?;
                 } else {
-                    // 回滚所有变更
-                    self.conn.execute("ROLLBACK", [])?;
-                    return Err(rusqlite::Error::SqliteFailure(
+                    // Attempt rollback, ignore error if rollback fails
+                    let _ = self.conn.execute("ROLLBACK", []);
+                    // Return a specific SqlitedError variant if possible, or a generic one
+                    return Err($crate::error::SqlitedError::Rusqlite(rusqlite::Error::SqliteFailure(
                         rusqlite::ffi::Error {
-                            code: rusqlite::ffi::ErrorCode::InternalMalfunction,
+                            code: rusqlite::ffi::ErrorCode::InternalMalfunction, // Or a more specific code
                             extended_code: 1
                         },
                         Some("Failed to apply migrations".to_string())
-                    ));
+                    )));
                 }
                 
                 Ok(())
             }
             
             /// 返回一个新的连接到同一数据库
-            pub fn new_connection(&self) -> rusqlite::Result<Self> {
+            pub fn new_connection(&self) -> $crate::error::Result<Self> {
+                // get_connection already returns the correct Result type
                 let conn = $crate::connection::get_connection(&self.pool)?;
                 Ok(Self::new(conn, self.pool.clone()))
             }
             
             /// 在事务中执行闭包，自动处理提交和回滚
-            pub fn transaction<T, F>(&self, f: F) -> rusqlite::Result<T>
+            pub fn transaction<T, F>(&self, f: F) -> $crate::error::Result<T>
             where
-                F: FnOnce(&Self) -> rusqlite::Result<T>,
+                F: FnOnce(&Self) -> $crate::error::Result<T>, // Closure should also return custom Result
             {
                 self.conn.execute("BEGIN TRANSACTION", [])?;
-                
+
                 match f(self) {
                     Ok(result) => {
                         self.conn.execute("COMMIT", [])?;
                         Ok(result)
                     },
                     Err(e) => {
-                        self.conn.execute("ROLLBACK", [])?;
-                        Err(e)
+                        // Attempt rollback, ignore error if rollback fails
+                        let _ = self.conn.execute("ROLLBACK", []);
+                        Err(e) // Propagate the original error
                     }
                 }
             }
@@ -1049,23 +1152,23 @@ macro_rules! define_db {
         
         impl $id {
             /// 打开给定路径的数据库（如果为None则使用内存模式）
-            pub fn open(path: Option<impl AsRef<std::path::Path>>) -> rusqlite::Result<Database> {
+            pub fn open(path: Option<impl AsRef<std::path::Path>>) -> $crate::error::Result<Database> {
                 match path {
                     Some(path) => {
                         let path_buf = path.as_ref().to_path_buf();
                         let canonical_path = if path_buf.exists() {
                             std::fs::canonicalize(&path_buf).unwrap_or(path_buf)
                         } else {
-                            // 确保目录存在
+                            // Ensure directory creation maps error correctly
                             if let Some(parent) = path_buf.parent() {
                                 std::fs::create_dir_all(parent)
-                                    .map_err(|e| rusqlite::Error::SqliteFailure(
+                                    .map_err(|e| $crate::error::SqlitedError::Rusqlite(rusqlite::Error::SqliteFailure(
                                         rusqlite::ffi::Error {
                                             code: rusqlite::ffi::ErrorCode::CannotOpen,
                                             extended_code: 1
                                         },
                                         Some(format!("Failed to create database directory: {}", e))
-                                    ))?;
+                                    )))?;
                             }
                             path_buf
                         };
@@ -1077,87 +1180,54 @@ macro_rules! define_db {
                                 existing_pool.clone()
                             } else {
                                 // 创建新的连接池
-                                let pool = match $crate::connection::new_file_pool(&canonical_path) {
-                                    Ok(pool) => std::sync::Arc::new(pool),
-                                    Err(e) => return Err(rusqlite::Error::SqliteFailure(
-                                        rusqlite::ffi::Error {
-                                            code: rusqlite::ffi::ErrorCode::InternalMalfunction,
-                                            extended_code: 1
-                                        },
-                                        Some(format!("Pool error: {}", e))
-                                    )),
-                                };
+                                let pool = $crate::pool::ConnectionPool::new(&canonical_path)
+                                    .map(std::sync::Arc::new)
+                                    // Map PoolError to SqlitedError if needed, or define From<PoolError> for SqlitedError
+                                    .map_err(|pool_err| $crate::error::SqlitedError::Rusqlite(rusqlite::Error::SqliteFailure(
+                                        rusqlite::ffi::Error{code: rusqlite::ffi::ErrorCode::InternalMalfunction, extended_code:1},
+                                        Some(format!("Pool creation error: {}", pool_err)) // Example mapping
+                                    )))?;
                                 pools.insert(canonical_path, pool.clone());
                                 pool
                             }
                         };
                         
-                        let conn = match $crate::connection::get_connection(&pool) {
-                            Ok(conn) => conn,
-                            Err(e) => return Err(rusqlite::Error::SqliteFailure(
-                                rusqlite::ffi::Error {
-                                    code: rusqlite::ffi::ErrorCode::InternalMalfunction,
-                                    extended_code: 1
-                                },
-                                Some(format!("Failed to get connection: {}", e))
-                            )),
-                        };
-                        
+                        // get_connection already returns Result<SqliteConnection>
+                        let conn = $crate::connection::get_connection(&pool)?;
                         let db = Database::new(conn, pool);
-                        
-                        // 应用迁移
                         db.apply_migrations()?;
-                        
                         Ok(db)
                     },
                     None => {
-                        // 内存模式不共享连接池
-                        let pool = match $crate::connection::new_memory_pool() {
-                            Ok(pool) => std::sync::Arc::new(pool),
-                            Err(e) => return Err(rusqlite::Error::SqliteFailure(
-                                rusqlite::ffi::Error {
-                                    code: rusqlite::ffi::ErrorCode::InternalMalfunction,
-                                    extended_code: 1
-                                },
-                                Some(format!("Memory pool error: {}", e))
-                            )),
-                        };
-                        
-                        let conn = match $crate::connection::get_connection(&pool) {
-                            Ok(conn) => conn,
-                            Err(e) => return Err(rusqlite::Error::SqliteFailure(
-                                rusqlite::ffi::Error {
-                                    code: rusqlite::ffi::ErrorCode::InternalMalfunction,
-                                    extended_code: 1
-                                },
-                                Some(format!("Failed to get connection: {}", e))
-                            )),
-                        };
-                        
+                        // new_memory_pool returns Result<_, PoolError>, map it
+                        let pool = $crate::pool::ConnectionPool::new_memory()
+                             .map(std::sync::Arc::new)
+                             .map_err(|pool_err| $crate::error::SqlitedError::Rusqlite(rusqlite::Error::SqliteFailure(
+                                 rusqlite::ffi::Error{code: rusqlite::ffi::ErrorCode::InternalMalfunction, extended_code:1},
+                                 Some(format!("Memory pool error: {}", pool_err))
+                             )))?;
+                        let conn = $crate::connection::get_connection(&pool)?;
                         let db = Database::new(conn, pool);
-                        
-                        // 应用迁移
-                        db.apply_migrations()?;
-                        
+                        db.apply_migrations()?; // Use ? here
                         Ok(db)
                     }
                 }
             }
             
             /// 打开内存数据库
-            pub fn memory() -> rusqlite::Result<Database> {
+            pub fn memory() -> $crate::Result<Database> {
                 Self::open(None::<&std::path::Path>)
             }
             
             /// 在临时位置创建数据库
-            pub fn temp() -> rusqlite::Result<Database> {
+            pub fn temp() -> $crate::Result<Database> {
                 let temp_dir = std::env::temp_dir();
                 let db_file = temp_dir.join(format!("sqlited_{}.db", uuid::Uuid::new_v4()));
                 Self::open(Some(db_file))
             }
             
             /// 打开共享内存数据库（使用命名内存数据库）
-            pub fn shared_memory(name: &str) -> rusqlite::Result<Database> {
+            pub fn shared_memory(name: &str) -> $crate::Result<Database> {
                 // 正确的共享内存语法，注意必须以 "file:" 开头
                 let memory_path = format!("file:{}?mode=memory&cache=shared", name);
                 
@@ -1220,9 +1290,23 @@ macro_rules! define_db {
             pub fn raw_connection(&self) -> &$crate::connection::SqliteConnection {
                 &self.conn
             }
+
+            // 获取表的所有迁移
+            fn get_all_table_migrations() -> Vec<(String, String, Option<String>)> {
+                let mut migrations = Vec::new();
+                
+                // 收集所有表的迁移
+                $(
+                    if let Some(table_migrations) = $crate::_collect_table_migrations!($element) {
+                        migrations.extend(table_migrations);
+                    }
+                )*
+                
+                migrations
+            }
             
             // 应用迁移到此数据库
-            fn apply_migrations(&self) -> rusqlite::Result<()> {
+            fn apply_migrations(&self) -> $crate::error::Result<()> {
                 // 创建迁移表（如果不存在）
                 self.conn.execute(
                     "CREATE TABLE IF NOT EXISTS _sqlited_migrations (
@@ -1232,49 +1316,98 @@ macro_rules! define_db {
                     )",
                     [],
                 )?;
+
+                // 获取所有表定义的迁移
+                let table_migrations = Self::get_all_table_migrations();
                 
                 // 使用事务确保原子性
                 self.conn.execute("BEGIN TRANSACTION", [])?;
                 
                 let mut success = true;
-                // 按顺序应用所有迁移
-                for migration in Self::get_migrations() {
-                    // 按分号拆分多个 SQL 语句
-                    let statements = migration.split(';')
-                        .map(|s| s.trim())
-                        .filter(|s| !s.is_empty())
-                        .collect::<Vec<_>>();
+
+                // 首先应用表迁移
+                for (name, up_sql, _) in table_migrations {
+                    let already_applied = self.conn.query_row(
+                        "SELECT COUNT(*) FROM _sqlited_migrations WHERE name = ?",
+                        [&name],
+                        |row| row.get::<_, i32>(0),
+                    ).unwrap_or(0) > 0;
                     
-                    for statement in &statements {
-                        if statement.is_empty() {
-                            continue;
+                    if !already_applied {
+                        // 按分号拆分多个 SQL 语句
+                        let statements = up_sql.split(';')
+                            .map(|s| s.trim())
+                            .filter(|s| !s.is_empty())
+                            .collect::<Vec<_>>();
+                        
+                        for statement in &statements {
+                            match self.conn.execute(statement, []) {
+                                Ok(_) => {},
+                                Err(e) => {
+                                    eprintln!("Failed to apply migration {}: {}", name, e);
+                                    success = false;
+                                    break;
+                                }
+                            }
                         }
                         
-                        // 对每条语句单独应用迁移逻辑
-                        let statement_hash = format!("{:x}", md5::compute(statement));
-                        let already_applied = self.conn.query_row(
-                            "SELECT COUNT(*) FROM _sqlited_migrations WHERE name = ?",
-                            [&statement_hash],
-                            |row| row.get::<_, i32>(0),
-                        ).unwrap_or(0) > 0;
+                        // 记录已应用的迁移
+                        if success {
+                            if let Err(e) = self.conn.execute(
+                                "INSERT INTO _sqlited_migrations (name) VALUES (?)",
+                                [&name],
+                            ) {
+                                eprintln!("Failed to record migration {}: {}", name, e);
+                                success = false;
+                            }
+                        }
+                    }
+                    
+                    if !success {
+                        break;
+                    }
+                }
+
+                // 按顺序应用其他所有迁移
+                if success{
+                    for migration in Self::get_migrations() {
+                        // 按分号拆分多个 SQL 语句
+                        let statements = migration.split(';')
+                            .map(|s| s.trim())
+                            .filter(|s| !s.is_empty())
+                            .collect::<Vec<_>>();
                         
-                        if !already_applied {
-                            match self.conn.execute(statement, []) {
-                                Ok(_) => {
-                                    // 记录已应用的迁移
-                                    if let Err(e) = self.conn.execute(
-                                        "INSERT INTO _sqlited_migrations (name) VALUES (?)",
-                                        [&statement_hash],
-                                    ) {
-                                        eprintln!("Failed to record migration: {}", e);
+                        for statement in &statements {
+                            if statement.is_empty() {
+                                continue;
+                            }
+                            
+                            // 对每条语句单独应用迁移逻辑
+                            let statement_hash = format!("{:x}", md5::compute(statement));
+                            let already_applied = self.conn.query_row(
+                                "SELECT COUNT(*) FROM _sqlited_migrations WHERE name = ?",
+                                [&statement_hash],
+                                |row| row.get::<_, i32>(0),
+                            ).unwrap_or(0) > 0;
+                            
+                            if !already_applied {
+                                match self.conn.execute(statement, []) {
+                                    Ok(_) => {
+                                        // 记录已应用的迁移
+                                        if let Err(e) = self.conn.execute(
+                                            "INSERT INTO _sqlited_migrations (name) VALUES (?)",
+                                            [&statement_hash],
+                                        ) {
+                                            eprintln!("Failed to record migration: {}", e);
+                                            success = false;
+                                            break;
+                                        }
+                                    },
+                                    Err(e) => {
+                                        eprintln!("Failed to apply migration: {}", e);
                                         success = false;
                                         break;
                                     }
-                                },
-                                Err(e) => {
-                                    eprintln!("Failed to apply migration: {}", e);
-                                    success = false;
-                                    break;
                                 }
                             }
                         }
@@ -1300,9 +1433,9 @@ macro_rules! define_db {
             }
             
             // 在事务中执行闭包，自动处理提交和回滚
-            pub fn transaction<T, F>(&self, f: F) -> rusqlite::Result<T>
+            pub fn transaction<T, F>(&self, f: F) -> $crate::error::Result<T>
             where
-                F: FnOnce(&Self) -> rusqlite::Result<T>,
+                F: FnOnce(&Self) -> $crate::error::Result<T>,
             {
                 self.conn.execute("BEGIN TRANSACTION", [])?;
                 
@@ -1312,7 +1445,7 @@ macro_rules! define_db {
                         Ok(result)
                     },
                     Err(e) => {
-                        self.conn.execute("ROLLBACK", [])?;
+                        let _ = self.conn.execute("ROLLBACK", []);
                         Err(e)
                     }
                 }
@@ -1452,5 +1585,24 @@ macro_rules! _resolve_migration_element {
     // 处理表达式 (已经是 SQL 或调用了 create_table_sql())
     ($expr:expr) => {
         $expr.to_string()
+    };
+}
+
+/// 收集表的迁移
+#[macro_export]
+#[doc(hidden)]
+macro_rules! _collect_table_migrations {
+    // 对于表标识符，简单地调用 get_migrations 方法
+    ($table:ident) => {{
+        // 直接尝试调用 get_migrations 方法，错误会在编译时捕获
+        match std::panic::catch_unwind(|| $table::get_migrations()) {
+            Ok(migrations) => Some(migrations),
+            Err(_) => None
+        }
+    }};
+    
+    // 对于其他表达式，返回None
+    ($expr:expr) => {
+        None::<Vec<(String, String, Option<String>)>>
     };
 }
