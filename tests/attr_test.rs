@@ -25,17 +25,17 @@ mod tests {
         #[autoincrement]
         id: i32,
         name: String,
-        #[default_value("Guest")]
+        #[default("Guest")]
         username: String,
-        #[default_value("now")]
+        #[default("now")]
         created_at: UtcDateTime,
-        #[default_value("now")]
+        #[default("now")]
         timestamp: Timestamp,
-        #[default_value("1")]
+        #[default("1")]
         is_active: bool,
-        #[default_value("0")]
+        #[default("0")]
         is_deleted: bool,
-        #[default_value("3.14")]
+        #[default("3.14")]
         pi_value: f64
     }
 
@@ -107,11 +107,11 @@ mod tests {
         #[not_null]
         #[unique]
         name: String,
-        #[default_value("now")]
+        #[default("now")]
         created_at: UtcDateTime,
         #[check("age >= 18")]
         age: i32,
-        #[default_value("true")]
+        #[default("true")]
         is_active: bool
     }
 

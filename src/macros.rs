@@ -1007,6 +1007,11 @@ macro_rules! define_db {
 
                 // 首先应用表迁移
                 for (name, up_sql, _) in table_migrations {
+                    if name.starts_with("error") {
+                        println!("Skipping invalid migration: {}", up_sql);
+                        continue;
+                    }
+                    
                     let already_applied = self.conn.query_row(
                         "SELECT COUNT(*) FROM _sqlited_migrations WHERE name = ?",
                         [&name],
@@ -1327,6 +1332,11 @@ macro_rules! define_db {
 
                 // 首先应用表迁移
                 for (name, up_sql, _) in table_migrations {
+                    if name.starts_with("error") {
+                        println!("Skipping invalid migration: {}", up_sql);
+                        continue;
+                    }
+
                     let already_applied = self.conn.query_row(
                         "SELECT COUNT(*) FROM _sqlited_migrations WHERE name = ?",
                         [&name],

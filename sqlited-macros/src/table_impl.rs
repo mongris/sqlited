@@ -1,9 +1,11 @@
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
+use syn::spanned::Spanned;
 use syn::{parse_macro_input, Attribute, Data, DeriveInput, Fields, LitStr, Meta, Token};
 use syn::punctuated::Punctuated;
 use syn::token::Comma;
+use proc_macro_error::emit_error;
 
 /// 表级属性
 struct TableAttribute {
@@ -43,7 +45,7 @@ struct FieldAttribute {
     is_unique: bool,
     is_not_null: bool,
     check_constraint: Option<String>,
-    default_value: Option<String>,
+    default: Option<String>,
     foreign_key: Option<(String, String, String, String)>, // (table, column, on_delete, on_update)
 }
 
@@ -96,61 +98,88 @@ pub fn table(input: TokenStream) -> TokenStream {
     generate_table_impl(struct_name, &fields.named, &table_attributes, &field_attributes)
 }
 
-/// 处理表级属性
+/// 解析表级属性，增加迁移类型拼写检查
 fn process_table_attributes(attrs: &[Attribute]) -> Vec<TableAttribute> {
     let mut table_attrs = Vec::new();
-  
-    // 1. 直接检查每个属性的路径
+    
     for attr in attrs {
         if let Some(attr_meta_name) = attr.path().get_ident() {
-
-            let attr_name = attr_meta_name.to_string();
             
             // 打印调试信息
             // println!("Processing attribute: {}", attr_name);
 
-
-            if attr_name == "migration" {
-                // 解析 migration 属性参数
+            if attr_meta_name == "migration" {
                 match &attr.meta {
-                    Meta::List(list) => {
-                        if let Ok(args) = list.parse_args_with(
-                            Punctuated::<LitStr, Token![,]>::parse_terminated
-                        ) {
-                            if !args.is_empty() {
-                                let migration_type_str = args[0].value();
-                                
-                                // 确定迁移类型
-                                let migration_type = match migration_type_str.as_str() {
-                                    "add_column" => MigrationType::AddColumn,
-                                    "rename_column" => MigrationType::RenameColumn,
-                                    "modify_column" => MigrationType::ModifyColumn, 
-                                    "drop_column" => MigrationType::DropColumn,
-                                    // "add_constraint" => MigrationType::AddConstraint,
-                                    // "drop_constraint" => MigrationType::DropConstraint,
-                                    "add_index" => MigrationType::AddIndex,
-                                    "drop_index" => MigrationType::DropIndex,
-                                    "custom" => MigrationType::Custom,
-                                    _ => MigrationType::Custom,
-                                };
-                                
-                                // 收集参数
-                                let values = args.iter()
-                                                .skip(1)
-                                                .map(|arg| arg.value())
-                                                .collect();
-                                
-                                table_attrs.push(TableAttribute {
-                                    attr_type: TableAttributeType::Migration,
-                                    value: values,
-                                    migration_type: Some(migration_type),
-                                });
-                            }
+                    Meta::List(meta_list) => {
+                        let args: Vec<String> = meta_list
+                            .parse_args_with(Punctuated::<LitStr, Token![,]>::parse_terminated)
+                            .map(|p| p.iter().map(|lit| lit.value()).collect())
+                            .unwrap_or_default();
+                        if args.is_empty() {
+                            emit_error!(
+                                meta_list.span(),
+                                "Migration requires at least one argument (migration type)"
+                            );
+                            continue;
                         }
-                    },
-                    _ => panic!("Incorrect format for using the `migration` attribute."),
+                    
+                        // 检查迁移类型是否有效
+                        let migration_type_str = &args[0];
+                        let valid_migration_types = [
+                            "add_column", 
+                            "rename_column", 
+                            "modify_column", 
+                            "drop_column", 
+                            "add_index", 
+                            "drop_index", 
+                            "custom"
+                        ];
+                        
+                        if !valid_migration_types.contains(&migration_type_str.as_str()) {
+                            let suggestion = find_closest_match(migration_type_str, &valid_migration_types);
+                            let error_msg = if let Some(suggested) = suggestion {
+                                format!("Invalid migration type '{}'. Did you mean '{}'?", migration_type_str, suggested)
+                            } else {
+                                format!("Invalid migration type '{}'. Valid types are: {}", 
+                                    migration_type_str, valid_migration_types.join(", "))
+                            };
+                            
+                            emit_error!(
+                                meta_list.span(),
+                                "{}", error_msg
+                            );
+                            continue;
+                        }
+                        
+                        // 解析迁移类型
+                        let migration_type = match migration_type_str.as_str() {
+                            "add_column" => MigrationType::AddColumn,
+                            "rename_column" => MigrationType::RenameColumn,
+                            "modify_column" => MigrationType::ModifyColumn,
+                            "drop_column" => MigrationType::DropColumn,
+                            "add_index" => MigrationType::AddIndex,
+                            "drop_index" => MigrationType::DropIndex,
+                            "custom" => MigrationType::Custom,
+                            _ => unreachable!(),
+                        };
+                        
+                        // 检查参数数量是否正确
+                        check_migration_args(&migration_type, &args, meta_list.span());
+                        
+                        table_attrs.push(TableAttribute {
+                            attr_type: TableAttributeType::Migration,
+                            value: args[1..].to_vec(), // 迁移参数
+                            migration_type: Some(migration_type),
+                        });
+                    }
+                    _ => {
+                        emit_error!(
+                            attr.span(),
+                            "Invalid attribute format for migration"
+                        );
+                    }
                 }
-            } else if attr_name == "constraint" {
+            } else if attr_meta_name == "constraint" {
                 // 处理表级约束
                 match &attr.meta {
                     Meta::List(list) => {
@@ -165,7 +194,7 @@ fn process_table_attributes(attrs: &[Attribute]) -> Vec<TableAttribute> {
                     },
                     _ => panic!("Incorrect format for using the `constraint` attribute."),
                 }
-            } else if attr_name == "index" {
+            } else if attr_meta_name == "index" {
                 // 处理普通索引
                 match &attr.meta {
                     Meta::List(list) => {
@@ -206,19 +235,89 @@ fn process_table_attributes(attrs: &[Attribute]) -> Vec<TableAttribute> {
             }
         }
     }
-
-    // 打印找到的所有表级属性
-    // println!("Found {} table attributes", table_attrs.len());
-    // for (i, attr) in table_attrs.iter().enumerate() {
-    //     let type_str = match attr.attr_type {
-    //         TableAttributeType::Constraint => "Constraint",
-    //         TableAttributeType::Index => "Index",
-    //         TableAttributeType::UniqueIndex => "UniqueIndex",
-    //     };
-    //     println!("Attribute {}: {:?} with values: {:?}", i, type_str, attr.value);
-    // }
-  
+    
     table_attrs
+}
+
+/// 添加辅助函数：检查迁移参数是否完整
+fn check_migration_args(migration_type: &MigrationType, args: &[String], span: proc_macro2::Span) {
+    let required_args = match migration_type {
+        MigrationType::AddColumn => 2, // 类型 + 列名
+        MigrationType::RenameColumn => 3, // 类型 + 旧列名 + 新列名
+        MigrationType::ModifyColumn => 2, // 类型 + 列名
+        MigrationType::DropColumn => 2, // 类型 + 列名
+        MigrationType::AddIndex => 3, // 类型 + 索引名 + 列名(s)
+        MigrationType::DropIndex => 2, // 类型 + 索引名
+        MigrationType::Custom => 3, // 类型 + 迁移名 + 上升SQL
+    };
+    
+    if args.len() < required_args {
+        let err_msg = match migration_type {
+            MigrationType::AddColumn => 
+                format!("'add_column' migration requires column name"),
+            MigrationType::RenameColumn => 
+                format!("'rename_column' migration requires old_name and new_name"),
+            MigrationType::ModifyColumn => 
+                format!("'modify_column' migration requires column name"),
+            MigrationType::DropColumn => 
+                format!("'drop_column' migration requires column name"),
+            MigrationType::AddIndex => 
+                format!("'add_index' migration requires index_name and column(s)"),
+            MigrationType::DropIndex => 
+                format!("'drop_index' migration requires index_name"),
+            MigrationType::Custom => 
+                format!("'custom' migration requires name and SQL statement"),
+        };
+        
+        emit_error!(span, "{}", err_msg);
+    }
+}
+
+/// 添加辅助函数：找到最相似的迁移类型（拼写检查）
+fn find_closest_match<'a>(input: &str, valid_types: &'a [&'a str]) -> Option<&'a str> {
+    valid_types.iter()
+        .map(|valid| (*valid, levenshtein_distance(input, valid)))
+        .min_by_key(|(_, distance)| *distance)
+        .filter(|(_, distance)| *distance <= 3) // 最多允许3个字符的差异
+        .map(|(valid, _)| valid)
+}
+
+/// 辅助函数：计算两个字符串的编辑距离
+fn levenshtein_distance(a: &str, b: &str) -> usize {
+    let a_len = a.chars().count();
+    let b_len = b.chars().count();
+    
+    // 边界情况处理
+    if a_len == 0 { return b_len; }
+    if b_len == 0 { return a_len; }
+    if a == b { return 0; }
+    
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    
+    // 创建距离矩阵
+    let mut matrix = vec![vec![0; b_len + 1]; a_len + 1];
+    
+    // 初始化第一行和第一列
+    for i in 0..=a_len { matrix[i][0] = i; }
+    for j in 0..=b_len { matrix[0][j] = j; }
+    
+    // 填充矩阵
+    for i in 1..=a_len {
+        for j in 1..=b_len {
+            let cost = if a[i-1] == b[j-1] { 0 } else { 1 };
+            
+            matrix[i][j] = std::cmp::min(
+                matrix[i-1][j] + 1,          // 删除
+                std::cmp::min(
+                    matrix[i][j-1] + 1,      // 插入
+                    matrix[i-1][j-1] + cost  // 替换
+                )
+            );
+        }
+    }
+    
+    matrix[a_len][b_len]
 }
 
 /// 处理字段属性
@@ -231,7 +330,7 @@ fn process_field_attributes(field: &syn::Field) -> FieldAttribute {
         is_unique: false,
         is_not_null: false,
         check_constraint: None,
-        default_value: None,
+        default: None,
         foreign_key: None,
     };
     
@@ -257,13 +356,13 @@ fn process_field_attributes(field: &syn::Field) -> FieldAttribute {
                     },
                     _ => panic!("Incorrect format for using the `check` attribute."),
                 }
-            } else if attr_meta_name == "default_value" {
+            } else if attr_meta_name == "default" {
                 match &attr.meta {
                   Meta::List(list) => {
                       let lit = list.parse_args::<LitStr>().unwrap();
-                      field_attr.default_value = Some(lit.value());
+                      field_attr.default = Some(lit.value());
                   },
-                    _ => panic!("Incorrect format for using the `default_value` attribute."),
+                    _ => panic!("Incorrect format for using the `default` attribute."),
                 }
             } else if attr_meta_name == "foreign_key" {
                 match &attr.meta {
@@ -479,7 +578,7 @@ fn generate_add_column_migration(
         return quote! {
             (
                 "error".to_string(),
-                "Migration add_column requires at least one argument".to_string(),
+                "-- Migration add_column requires at least one argument".to_string(),
                 None
             )
         };
@@ -506,7 +605,7 @@ fn generate_add_column_migration(
             constraints.push(format!("CHECK ({})", check));
         }
         
-        if let Some(default) = &field.default_value {
+        if let Some(default) = &field.default {
             constraints.push(format!("DEFAULT {}", default));
         }
         
@@ -543,7 +642,7 @@ fn generate_add_column_migration(
         quote! {
             (
                 "error".to_string(),
-                format!("Column {} not found in struct definition", #column_name),
+                format!("-- Column {} not found in struct definition", #column_name),
                 None
             )
         }
@@ -559,7 +658,7 @@ fn generate_rename_column_migration(
         return quote! {
             (
                 "error".to_string(),
-                "Migration rename_column requires old_name and new_name".to_string(),
+                "-- Migration rename_column requires old_name and new_name".to_string(),
                 None
             )
         };
@@ -598,7 +697,7 @@ fn generate_modify_column_migration(
         return quote! {
             (
                 "error".to_string(),
-                "Migration modify_column requires column name".to_string(),
+                "-- Migration modify_column requires column name".to_string(),
                 None
             )
         };
@@ -625,7 +724,7 @@ fn generate_modify_column_migration(
             constraints.push(format!("CHECK ({})", check));
         }
         
-        if let Some(default) = &field.default_value {
+        if let Some(default) = &field.default {
             constraints.push(format!("DEFAULT {}", default));
         }
         
@@ -679,7 +778,7 @@ fn generate_modify_column_migration(
         quote! {
             (
                 "error".to_string(),
-                format!("Column {} not found in struct definition", #column_name),
+                format!("-- Column {} not found in struct definition", #column_name),
                 None
             )
         }
@@ -701,7 +800,7 @@ fn generate_drop_column_migration(
         return quote! {
             (
                 "error".to_string(),
-                "Migration drop_column requires column name".to_string(),
+                "-- Migration drop_column requires column name".to_string(),
                 None
             )
         };
@@ -730,7 +829,7 @@ fn generate_drop_column_migration(
 //         return quote! {
 //             (
 //                 "error".to_string(),
-//                 "Migration add_constraint requires constraint name and definition".to_string(),
+//                 "-- Migration add_constraint requires constraint name and definition".to_string(),
 //                 None
 //             )
 //         };
@@ -767,7 +866,7 @@ fn generate_drop_column_migration(
 //         return quote! {
 //             (
 //                 "error".to_string(),
-//                 "Migration drop_constraint requires constraint name".to_string(),
+//                 "-- Migration drop_constraint requires constraint name".to_string(),
 //                 None
 //             )
 //         };
@@ -795,7 +894,7 @@ fn generate_add_index_migration(
         return quote! {
             (
                 "error".to_string(),
-                "Migration add_index requires index name and column(s)".to_string(),
+                "-- Migration add_index requires index name and column(s)".to_string(),
                 None
             )
         };
@@ -831,7 +930,7 @@ fn generate_drop_index_migration(
         return quote! {
             (
                 "error".to_string(),
-                "Migration drop_index requires index name".to_string(),
+                "-- Migration drop_index requires index name".to_string(),
                 None
             )
         };
@@ -856,7 +955,7 @@ fn generate_custom_migration(args: &[String]) -> TokenStream2 {
         return quote! {
             (
                 "error".to_string(),
-                "Migration custom requires name and SQL statement".to_string(),
+                "-- Migration custom requires name and SQL statement".to_string(),
                 None
             )
         };
@@ -1012,8 +1111,8 @@ fn generate_create_table_sql(
       }
       
       // 处理默认值
-      if let Some(default_value) = &field_attr.default_value {
-          let default_val = default_value.clone();
+      if let Some(default) = &field_attr.default {
+          let default_val = default.clone();
           let type_str = quote! { #field_type }.to_string();
           
           // 特殊处理 "now" 默认值

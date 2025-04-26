@@ -1,4 +1,5 @@
 use proc_macro::TokenStream;
+use proc_macro_error::proc_macro_error;
 use quote::quote;
 
 mod sql_check_impl;
@@ -71,6 +72,7 @@ pub fn sql_params(input: TokenStream) -> TokenStream {
 ///
 /// ```
 #[proc_macro_attribute]
+#[proc_macro_error]
 pub fn table(_attr: TokenStream, input: TokenStream) -> TokenStream {
     table_impl::table(input)
 }
@@ -155,7 +157,7 @@ pub fn not_null(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// }
 /// ```
 #[proc_macro_attribute]
-pub fn default_value(_attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn default(_attr: TokenStream, item: TokenStream) -> TokenStream {
     item
 }
 
@@ -235,4 +237,45 @@ pub fn index(_attr: TokenStream, item: TokenStream) -> TokenStream {
 #[proc_macro_attribute]
 pub fn unique_index(_attr: TokenStream, item: TokenStream) -> TokenStream {
     item
+}
+
+/// 定义表结构迁移
+/// 
+/// # 迁移类型
+/// 
+/// * `add_column` - 添加列：`#[migration("add_column", "column_name")]`
+/// * `rename_column` - 重命名列：`#[migration("rename_column", "old_name", "new_name")]`
+/// * `modify_column` - 修改列类型：`#[migration("modify_column", "column_name")]`
+/// * `drop_column` - 删除列：`#[migration("drop_column", "column_name")]`
+/// * `add_index` - 添加索引：`#[migration("add_index", "index_name", "column_name", "UNIQUE")]` (UNIQUE 是可选的)
+/// * `drop_index` - 删除索引：`#[migration("drop_index", "index_name")]`
+/// * `custom` - 自定义 SQL：`#[migration("custom", "migration_name", "up_sql", "down_sql")]`
+/// 
+/// # 示例
+/// 
+/// ```
+/// #[table]
+/// #[migration("add_column", "bio")]
+/// struct User {
+///     #[autoincrement]
+///     id: i32,
+///     name: String,
+///     email: String,
+///     bio: String,  // 新增的列
+/// }
+/// 
+/// #[table]
+/// #[migration("modify_column", "active")]
+/// struct Post {
+///     #[autoincrement]
+///     id: i32,
+///     title: String,
+///     content: String,
+///     #[default("1")]
+///     active: bool,  // 从String类型改为bool
+/// }
+/// ```
+#[proc_macro_attribute]
+pub fn migration(_args: TokenStream, input: TokenStream) -> TokenStream {
+    input
 }

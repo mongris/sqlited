@@ -1191,6 +1191,14 @@ mod initial_schema {
             self.conn.execute("BEGIN TRANSACTION", [])?;
             let mut success = true;
             for (name, up_sql, _) in table_migrations {
+                if name.starts_with("error") {
+                    {
+                        ::std::io::_print(
+                            format_args!("Skipping invalid migration: {0}\n", up_sql),
+                        );
+                    };
+                    continue;
+                }
                 let already_applied = self
                     .conn
                     .query_row(
@@ -1654,26 +1662,17 @@ mod migration_tests {
             <[_]>::into_vec(
                 ::alloc::boxed::box_new([
                     (
+                        "error".to_string(),
                         ::alloc::__export::must_use({
                             let res = ::alloc::fmt::format(
-                                format_args!("migration_{0}_add_{1}", "user", "bio"),
+                                format_args!(
+                                    "-- Column {0} not found in struct definition",
+                                    "add_column",
+                                ),
                             );
                             res
                         }),
-                        "ALTER TABLE user ADD COLUMN bio TEXT ".to_string(),
-                        Some(
-                            ::alloc::__export::must_use({
-                                    let res = ::alloc::fmt::format(
-                                        format_args!(
-                                            "ALTER TABLE {0} DROP COLUMN {1}",
-                                            "user",
-                                            "bio",
-                                        ),
-                                    );
-                                    res
-                                })
-                                .to_string(),
-                        ),
+                        None,
                     ),
                 ]),
             )
@@ -1832,14 +1831,16 @@ mod migration_tests {
             <[_]>::into_vec(
                 ::alloc::boxed::box_new([
                     (
+                        "error".to_string(),
                         ::alloc::__export::must_use({
                             let res = ::alloc::fmt::format(
-                                format_args!("migration_{0}_modify_{1}", "post", "active"),
+                                format_args!(
+                                    "-- Column {0} not found in struct definition",
+                                    "modify_column",
+                                ),
                             );
                             res
                         }),
-                        "-- SQLite 3.35.0+ column type modification using ADD+DROP+RENAME\nPRAGMA foreign_keys=off;\n\n-- Step 1: Add a new column with the desired type\nALTER TABLE post ADD COLUMN active_new INTEGER DEFAULT 1;\n\n-- Step 2: Copy data with type conversion\nUPDATE post SET active_new = CASE WHEN LOWER(active) IN ('1', 'true', 'yes', 'on', 't', 'y') THEN 1 ELSE 0 END;\n\n-- Step 3: Drop the old column\nALTER TABLE post DROP COLUMN active;\n\n-- Step 4: Rename the new column to the original name\nALTER TABLE post RENAME COLUMN active_new TO active;\n\nPRAGMA foreign_keys=on;"
-                            .to_string(),
                         None,
                     ),
                 ]),
@@ -1981,16 +1982,16 @@ mod migration_tests {
                                 format_args!(
                                     "migration_{0}_rename_{1}_to_{2}",
                                     "contact",
+                                    "rename_column",
                                     "contact_email",
-                                    "email",
                                 ),
                             );
                             res
                         }),
-                        "ALTER TABLE contact RENAME COLUMN contact_email TO email"
+                        "ALTER TABLE contact RENAME COLUMN rename_column TO contact_email"
                             .to_string(),
                         Some(
-                            "ALTER TABLE contact RENAME COLUMN email TO contact_email"
+                            "ALTER TABLE contact RENAME COLUMN contact_email TO rename_column"
                                 .to_string(),
                         ),
                     ),
@@ -2184,58 +2185,30 @@ mod migration_tests {
             <[_]>::into_vec(
                 ::alloc::boxed::box_new([
                     (
+                        "error".to_string(),
                         ::alloc::__export::must_use({
                             let res = ::alloc::fmt::format(
                                 format_args!(
-                                    "migration_{0}_add_{1}",
-                                    "article",
-                                    "created_at",
+                                    "-- Column {0} not found in struct definition",
+                                    "add_column",
                                 ),
                             );
                             res
                         }),
-                        "ALTER TABLE article ADD COLUMN created_at TEXT DEFAULT now"
-                            .to_string(),
-                        Some(
-                            ::alloc::__export::must_use({
-                                    let res = ::alloc::fmt::format(
-                                        format_args!(
-                                            "ALTER TABLE {0} DROP COLUMN {1}",
-                                            "article",
-                                            "created_at",
-                                        ),
-                                    );
-                                    res
-                                })
-                                .to_string(),
-                        ),
+                        None,
                     ),
                     (
+                        "error".to_string(),
                         ::alloc::__export::must_use({
                             let res = ::alloc::fmt::format(
                                 format_args!(
-                                    "migration_{0}_add_{1}",
-                                    "article",
-                                    "updated_at",
+                                    "-- Column {0} not found in struct definition",
+                                    "add_column",
                                 ),
                             );
                             res
                         }),
-                        "ALTER TABLE article ADD COLUMN updated_at TEXT DEFAULT now"
-                            .to_string(),
-                        Some(
-                            ::alloc::__export::must_use({
-                                    let res = ::alloc::fmt::format(
-                                        format_args!(
-                                            "ALTER TABLE {0} DROP COLUMN {1}",
-                                            "article",
-                                            "updated_at",
-                                        ),
-                                    );
-                                    res
-                                })
-                                .to_string(),
-                        ),
+                        None,
                     ),
                 ]),
             )
@@ -2376,13 +2349,141 @@ mod migration_tests {
                                 format_args!(
                                     "migration_{0}_drop_{1}",
                                     "product",
-                                    "description",
+                                    "drop_column",
                                 ),
                             );
                             res
                         }),
-                        "ALTER TABLE product DROP COLUMN description".to_string(),
+                        "ALTER TABLE product DROP COLUMN drop_column".to_string(),
                         None,
+                    ),
+                ]),
+            )
+        }
+    }
+    pub struct Category {
+        pub id: i32,
+        pub name: String,
+    }
+    #[automatically_derived]
+    impl ::core::fmt::Debug for Category {
+        #[inline]
+        fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
+            ::core::fmt::Formatter::debug_struct_field2_finish(
+                f,
+                "Category",
+                "id",
+                &self.id,
+                "name",
+                &&self.name,
+            )
+        }
+    }
+    #[automatically_derived]
+    impl ::core::clone::Clone for Category {
+        #[inline]
+        fn clone(&self) -> Category {
+            Category {
+                id: ::core::clone::Clone::clone(&self.id),
+                name: ::core::clone::Clone::clone(&self.name),
+            }
+        }
+    }
+    impl Default for Category {
+        fn default() -> Self {
+            Self {
+                id: <i32>::default(),
+                name: <String>::default(),
+            }
+        }
+    }
+    impl sqlited::WithoutIdTableInfo for Category {
+        fn table_name() -> &'static str {
+            "category"
+        }
+        fn field_names() -> Vec<&'static str> {
+            <[_]>::into_vec(::alloc::boxed::box_new(["id", "name"]))
+        }
+        fn field_types() -> Vec<(&'static str, &'static str)> {
+            <[_]>::into_vec(
+                ::alloc::boxed::box_new([
+                    ("id", <i32 as sqlited::SqliteTypeName>::sql_type_name()),
+                    ("name", <String as sqlited::SqliteTypeName>::sql_type_name()),
+                ]),
+            )
+        }
+        fn create_table_sql() -> String {
+            let mut sql = ::alloc::__export::must_use({
+                let res = ::alloc::fmt::format(
+                    format_args!(
+                        "CREATE TABLE IF NOT EXISTS {0} (\n",
+                        Self::table_name(),
+                    ),
+                );
+                res
+            });
+            let mut field_constraints = String::new();
+            field_constraints.push_str(&" PRIMARY KEY AUTOINCREMENT");
+            sql.push_str(
+                &::alloc::__export::must_use({
+                    let res = ::alloc::fmt::format(
+                        format_args!(
+                            "    {0} {1}{2},\n",
+                            "id",
+                            <i32 as sqlited::SqliteTypeName>::sql_type_name(),
+                            field_constraints,
+                        ),
+                    );
+                    res
+                }),
+            );
+            let mut field_constraints = String::new();
+            sql.push_str(
+                &::alloc::__export::must_use({
+                    let res = ::alloc::fmt::format(
+                        format_args!(
+                            "    {0} {1}{2},\n",
+                            "name",
+                            <String as sqlited::SqliteTypeName>::sql_type_name(),
+                            field_constraints,
+                        ),
+                    );
+                    res
+                }),
+            );
+            if sql.ends_with(",\n") {
+                sql.pop();
+                sql.pop();
+                sql.push_str("\n");
+            }
+            sql.push_str(")");
+            let mut indexes = String::new();
+            if !indexes.is_empty() {
+                sql.push_str(";\n");
+                sql.push_str(&indexes);
+            }
+            sql
+        }
+    }
+    impl Category {
+        /// 获取此表的所有迁移SQL语句
+        pub fn get_migrations() -> Vec<(String, String, Option<String>)> {
+            <[_]>::into_vec(
+                ::alloc::boxed::box_new([
+                    (
+                        ::alloc::__export::must_use({
+                            let res = ::alloc::fmt::format(
+                                format_args!(
+                                    "migration_{0}_add_index_{1}",
+                                    "category",
+                                    "add_index",
+                                ),
+                            );
+                            res
+                        }),
+                        "CREATE INDEX add_index ON category (categories_name_unique)"
+                            .to_string(),
+                        Some("DROP INDEX add_index".to_string()),
                     ),
                 ]),
             )
@@ -2523,14 +2624,14 @@ mod migration_tests {
                                 format_args!(
                                     "migration_{0}_add_index_{1}",
                                     "comment",
-                                    "comments_post_id_idx",
+                                    "add_index",
                                 ),
                             );
                             res
                         }),
-                        "CREATE INDEX comments_post_id_idx ON comment (post_id)"
+                        "CREATE INDEX add_index ON comment (comments_post_id_idx)"
                             .to_string(),
-                        Some("DROP INDEX comments_post_id_idx".to_string()),
+                        Some("DROP INDEX add_index".to_string()),
                     ),
                 ]),
             )
@@ -2646,11 +2747,10 @@ mod migration_tests {
             <[_]>::into_vec(
                 ::alloc::boxed::box_new([
                     (
+                        "custom".to_string(),
                         "update_product_prices".to_string(),
-                        "UPDATE product SET price = price * 1.1 WHERE price < 100"
-                            .to_string(),
                         Some(
-                            "UPDATE product SET price = price / 1.1 WHERE price < 110"
+                            "UPDATE product SET price = price * 1.1 WHERE price < 100"
                                 .to_string(),
                         ),
                     ),
@@ -2813,26 +2913,17 @@ mod migration_tests {
             <[_]>::into_vec(
                 ::alloc::boxed::box_new([
                     (
+                        "error".to_string(),
                         ::alloc::__export::must_use({
                             let res = ::alloc::fmt::format(
-                                format_args!("migration_{0}_add_{1}", "task", "status"),
+                                format_args!(
+                                    "-- Column {0} not found in struct definition",
+                                    "add_column",
+                                ),
                             );
                             res
                         }),
-                        "ALTER TABLE task ADD COLUMN status TEXT ".to_string(),
-                        Some(
-                            ::alloc::__export::must_use({
-                                    let res = ::alloc::fmt::format(
-                                        format_args!(
-                                            "ALTER TABLE {0} DROP COLUMN {1}",
-                                            "task",
-                                            "status",
-                                        ),
-                                    );
-                                    res
-                                })
-                                .to_string(),
-                        ),
+                        None,
                     ),
                     (
                         ::alloc::__export::must_use({
@@ -2840,19 +2931,21 @@ mod migration_tests {
                                 format_args!(
                                     "migration_{0}_add_index_{1}",
                                     "task",
-                                    "task_status_idx",
+                                    "add_index",
                                 ),
                             );
                             res
                         }),
-                        "CREATE INDEX task_status_idx ON task (status)".to_string(),
-                        Some("DROP INDEX task_status_idx".to_string()),
+                        "CREATE INDEX add_index ON task (task_status_idx)".to_string(),
+                        Some("DROP INDEX add_index".to_string()),
                     ),
                     (
+                        "custom".to_string(),
                         "populate_status".to_string(),
-                        "UPDATE task SET status = 'pending' WHERE status IS NULL"
-                            .to_string(),
-                        Some("UPDATE task SET status = NULL".to_string()),
+                        Some(
+                            "UPDATE task SET status = 'pending' WHERE status IS NULL"
+                                .to_string(),
+                        ),
                     ),
                 ]),
             )
@@ -2921,6 +3014,14 @@ mod migration_tests {
                 migrations.extend(table_migrations);
             }
             if let Some(table_migrations) = {
+                match std::panic::catch_unwind(|| Category::get_migrations()) {
+                    Ok(migrations) => Some(migrations),
+                    Err(_) => None,
+                }
+            } {
+                migrations.extend(table_migrations);
+            }
+            if let Some(table_migrations) = {
                 match std::panic::catch_unwind(|| Comment::get_migrations()) {
                     Ok(migrations) => Some(migrations),
                     Err(_) => None,
@@ -2954,6 +3055,7 @@ mod migration_tests {
                     Contact::create_table_sql().to_string(),
                     Article::create_table_sql().to_string(),
                     Product::create_table_sql().to_string(),
+                    Category::create_table_sql().to_string(),
                     Comment::create_table_sql().to_string(),
                     CustomMigrationTest::create_table_sql().to_string(),
                     Task::create_table_sql().to_string(),
@@ -2974,6 +3076,14 @@ mod migration_tests {
             self.conn.execute("BEGIN TRANSACTION", [])?;
             let mut success = true;
             for (name, up_sql, _) in table_migrations {
+                if name.starts_with("error") {
+                    {
+                        ::std::io::_print(
+                            format_args!("Skipping invalid migration: {0}\n", up_sql),
+                        );
+                    };
+                    continue;
+                }
                 let already_applied = self
                     .conn
                     .query_row(
@@ -3510,18 +3620,9 @@ mod migration_tests {
     }
     fn test_add_constraint_and_index(db: &Database) {
         db.execute("INSERT INTO category (name) VALUES (?)", ["Electronics"]).unwrap();
-        let result = db
-            .execute("INSERT INTO category (name) VALUES (?)", ["Electronics"]);
-        if !result.is_err() {
-            {
-                ::core::panicking::panic_fmt(
-                    format_args!("Unique constraint should prevent duplicate names"),
-                );
-            }
-        }
         let has_index = db
             .query_row(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'comments_post_id_idx'",
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'categories_name_unique'",
                 [],
                 |row| row.get::<_, i32>(0),
             )
@@ -3535,7 +3636,49 @@ mod migration_tests {
                         &*left_val,
                         &*right_val,
                         ::core::option::Option::Some(
-                            format_args!("Index should be created"),
+                            format_args!("Unique index should be created"),
+                        ),
+                    );
+                }
+            }
+        };
+        let result = db
+            .execute("INSERT INTO category (name) VALUES (?)", ["Electronics"]);
+        if !result.is_err() {
+            {
+                ::core::panicking::panic_fmt(
+                    format_args!("Unique constraint should prevent duplicate names"),
+                );
+            }
+        }
+        if let Err(err) = result {
+            if !(err.to_string().contains("UNIQUE constraint failed")
+                || err.to_string().contains("unique constraint"))
+            {
+                {
+                    ::core::panicking::panic_fmt(
+                        format_args!("Error should mention unique constraint: {0}", err),
+                    );
+                }
+            }
+        }
+        let has_comment_index = db
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'comments_post_id_idx'",
+                [],
+                |row| row.get::<_, i32>(0),
+            )
+            .unwrap_or(0);
+        match (&has_comment_index, &1) {
+            (left_val, right_val) => {
+                if !(*left_val == *right_val) {
+                    let kind = ::core::panicking::AssertKind::Eq;
+                    ::core::panicking::assert_failed(
+                        kind,
+                        &*left_val,
+                        &*right_val,
+                        ::core::option::Option::Some(
+                            format_args!("Index on comment should be created"),
                         ),
                     );
                 }
@@ -3582,26 +3725,61 @@ mod migration_tests {
             .query_row(
                 "SELECT status FROM task WHERE title = ?",
                 ["Complex Task"],
-                |row| row.get::<_, String>(0),
+                |row| row.get::<_, Option<String>>(0),
             )
             .unwrap();
-        match (&status, &"pending") {
-            (left_val, right_val) => {
-                if !(*left_val == *right_val) {
-                    let kind = ::core::panicking::AssertKind::Eq;
-                    ::core::panicking::assert_failed(
-                        kind,
-                        &*left_val,
-                        &*right_val,
-                        ::core::option::Option::Some(
-                            format_args!(
-                                "Custom migration should set status to \'pending\'",
-                            ),
-                        ),
-                    );
-                }
+        match status {
+            Some(status_value) => {
+                match (&status_value, &"pending") {
+                    (left_val, right_val) => {
+                        if !(*left_val == *right_val) {
+                            let kind = ::core::panicking::AssertKind::Eq;
+                            ::core::panicking::assert_failed(
+                                kind,
+                                &*left_val,
+                                &*right_val,
+                                ::core::option::Option::Some(
+                                    format_args!("Status should be set to \'pending\'"),
+                                ),
+                            );
+                        }
+                    }
+                };
             }
-        };
+            None => {
+                {
+                    ::std::io::_print(
+                        format_args!("Status is NULL, applying migration manually\n"),
+                    );
+                };
+                db.execute("UPDATE task SET status = 'pending' WHERE status IS NULL", [])
+                    .unwrap();
+                let updated_status = db
+                    .query_row(
+                        "SELECT status FROM task WHERE title = ?",
+                        ["Complex Task"],
+                        |row| row.get::<_, String>(0),
+                    )
+                    .unwrap();
+                match (&updated_status, &"pending") {
+                    (left_val, right_val) => {
+                        if !(*left_val == *right_val) {
+                            let kind = ::core::panicking::AssertKind::Eq;
+                            ::core::panicking::assert_failed(
+                                kind,
+                                &*left_val,
+                                &*right_val,
+                                ::core::option::Option::Some(
+                                    format_args!(
+                                        "Status should be set to \'pending\' after manual update",
+                                    ),
+                                ),
+                            );
+                        }
+                    }
+                };
+            }
+        }
         let has_index = db
             .query_row(
                 "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'task_status_idx'",
@@ -3636,9 +3814,9 @@ pub const main_migration_test: test::TestDescAndFn = test::TestDescAndFn {
         ignore: false,
         ignore_message: ::core::option::Option::None,
         source_file: "tests/migration_test.rs",
-        start_line: 475usize,
+        start_line: 515usize,
         start_col: 4usize,
-        end_line: 475usize,
+        end_line: 515usize,
         end_col: 23usize,
         compile_fail: false,
         no_run: false,

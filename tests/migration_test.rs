@@ -6,7 +6,6 @@ use sqlited::{
       define_db,
       table,
   };
-  use std::path::PathBuf;
 
   // 初始用户表 - 无bio字段
   #[table]
@@ -127,8 +126,6 @@ mod migration_tests {
       table,
       UtcDateTime,
   };
-  use std::path::PathBuf;
-  use std::fs;
   
   // 使用迁移属性添加bio字段
   #[table]
@@ -149,7 +146,7 @@ mod migration_tests {
       id: i32,
       title: String,
       content: String,
-      #[default_value("1")]
+      #[default("1")]
       active: bool,  // 从String类型改为bool
   }
 
@@ -172,9 +169,9 @@ mod migration_tests {
       id: i32,
       title: String,
       content: String,
-      #[default_value("now")]
+      #[default("now")]
       created_at: UtcDateTime,
-      #[default_value("now")]
+      #[default("now")]
       updated_at: UtcDateTime,
   }
 

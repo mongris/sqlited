@@ -1,6 +1,6 @@
 [package]
 name = "sqlited-macros"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2024"
 resolver = "3"
 
@@ -14,3 +14,4 @@ proc-macro2 = "1.0"
 quote = "1.0"
 syn = { version = "2.0", features = ["full", "extra-traits"] }
 sqlformat = "0.3"
+proc-macro-error = "1.0"

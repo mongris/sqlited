@@ -19,11 +19,11 @@ mod tests {
         name: String,
         age: i32,
         email: Option<String>,
-        #[default_value("now")]
+        #[default("now")]
         created_at: UtcDateTime,
-        #[default_value("now")]
+        #[default("now")]
         created_at_timestamp: Timestamp,
-        #[default_value("1")]
+        #[default("1")]
         active: bool,
     }
     
