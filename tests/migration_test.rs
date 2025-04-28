@@ -233,7 +233,7 @@ mod migration_tests {
 
   // 定义升级后的数据库
   define_db!(
-      pub static ref MIGRATED_DB: MigratedDb<()> = [
+      pub static ref MIGRATED_DB: MigratedDb = [
           User,
           Post,
           Contact,

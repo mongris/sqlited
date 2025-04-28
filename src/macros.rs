@@ -981,6 +981,21 @@ pub fn get_statement_key(statement: &str) -> String {
 /// ```
 #[macro_export]
 macro_rules! define_db {
+    // 不带泛型参数的版本 - 自动转换为 T<()>
+    (
+        pub static ref $id:ident: $t:ident = [
+            $(
+                $element:tt
+            ),* $(,)?
+        ]
+    ) => {
+        // 调用带泛型参数的版本，使用 () 作为默认参数
+        $crate::define_db!(
+            pub static ref $id: $t<()> = [
+                $($element),*
+            ]
+        );
+    };
     // 带自定义类型的版本
     (
         pub static ref $id:ident: $t:ident<$($d:ty),*> = [
