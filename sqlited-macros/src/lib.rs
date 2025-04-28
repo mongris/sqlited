@@ -4,9 +4,11 @@ use quote::quote;
 
 mod sql_check_impl;
 mod sql_impl;
+mod sql_as_impl;
 mod sql_no_quote_impl;
 mod sql_params_impl;
 mod table_impl;
+mod utils;
 
 #[proc_macro]
 pub fn sql(input: TokenStream) -> TokenStream {
@@ -82,7 +84,7 @@ pub fn table(_attr: TokenStream, input: TokenStream) -> TokenStream {
 /// # Example
 /// 
 /// ```
-/// use sqlited_derive::autoincrement;
+/// use sqlited::autoincrement;
 /// 
 /// struct User {
 ///     #[autoincrement]
@@ -125,7 +127,7 @@ pub fn unique(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// # Example
 ///
 /// ```
-/// use sqlited_derive::check;
+/// use sqlited::check;
 ///
 /// struct User {
 ///     #[check("age >= 18")]
@@ -149,7 +151,7 @@ pub fn not_null(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// # Example
 ///
 /// ```
-/// use sqlited_derive::default;
+/// use sqlited::default;
 ///
 /// struct User {
 ///     #[default("now")]
@@ -172,7 +174,7 @@ pub fn default(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// # Example
 ///
 /// ```
-/// use sqlited_derive::foreign_key;
+/// use sqlited::foreign_key;
 ///
 /// struct Post {
 ///     #[foreign_key("users", "id", "CASCADE", "CASCADE")]
@@ -189,7 +191,7 @@ pub fn foreign_key(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// # Example
 ///
 /// ```
-/// use sqlited_derive::constraint;
+/// use sqlited::constraint;
 ///
 /// #[constraint("UNIQUE(first_name, last_name)")]
 /// struct User {
@@ -208,7 +210,7 @@ pub fn constraint(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// # Example
 ///
 /// ```
-/// use sqlited_derive::index;
+/// use sqlited::index;
 ///
 /// #[index("idx_user_name", "name")]
 /// struct User {
@@ -226,7 +228,7 @@ pub fn index(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// # Example
 ///
 /// ```
-/// use sqlited_derive::unique_index;
+/// use sqlited::unique_index;
 ///
 /// #[unique_index("idx_user_email", "email")]
 /// struct User {
@@ -278,4 +280,128 @@ pub fn unique_index(_attr: TokenStream, item: TokenStream) -> TokenStream {
 #[proc_macro_attribute]
 pub fn migration(_args: TokenStream, input: TokenStream) -> TokenStream {
     input
+}
+
+/// Simplifies defining custom SQLite-compatible types.
+///
+/// This macro automatically adds the necessary derives and SQLite type handling.
+/// It supports both structs and enums, with different serialization styles:
+///
+/// - `json`: Serializes the type to JSON for storage in SQLite
+/// - `binary`: Serializes the type to binary format for storage in SQLite
+/// - `string`: For enums only - maps enum variants to string values in SQLite
+///
+/// # Examples
+///
+/// ## Struct with JSON serialization
+///
+/// ```rust
+/// #[sql_as(json)]
+/// pub struct Config {
+///     pub name: String,
+///     pub settings: HashMap<String, String>,
+///     pub enabled_features: Vec<String>,
+/// }
+/// ```
+///
+/// This expands to:
+///
+/// ```rust
+/// #[derive(Default, Clone, Debug, PartialEq, Serialize, Deserialize)]
+/// pub struct Config {
+///     pub name: String,
+///     pub settings: HashMap<String, String>,
+///     pub enabled_features: Vec<String>,
+/// }
+/// sqld!(json Config);
+/// ```
+///
+/// ## Tuple struct with binary serialization
+///
+/// ```rust
+/// #[sql_as(binary)]
+/// pub struct WrappedUuid(Uuid);
+/// ```
+///
+/// ## Enum with string serialization
+///
+/// ```rust
+/// #[sql_as(string)]
+/// pub enum Status {
+///     #[default]
+///     Active,
+///     Inactive, 
+///     #[sql_as_value("P")]
+///     Pending
+/// }
+/// ```
+///
+/// This expands to:
+///
+/// ```rust
+/// #[derive(Default, Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
+/// pub enum Status {
+///     #[default]
+///     Active,
+///     Inactive,
+///     Pending
+/// }
+/// sqld!(
+///     enum Status {
+///         Active => "Active",
+///         Inactive => "Inactive",
+///         Pending => "P"
+///     }
+/// );
+/// ```
+#[proc_macro_attribute]
+#[proc_macro_error]
+pub fn sql_as(args: TokenStream, input: TokenStream) -> TokenStream {
+    sql_as_impl::sql_as(args, input)
+}
+
+/// Specifies a custom string value for an enum variant when using `#[sql_as(string)]`.
+///
+/// By default, enum variants are mapped to strings with the same name as the variant.
+/// With `sql_as_value`, you can customize the string representation in the database.
+///
+/// # Example
+///
+/// ```rust
+/// #[sql_as(string)]
+/// pub enum UserRole {
+///     #[default]
+///     #[sql_as_value("A")]
+///     Admin,
+///     #[sql_as_value("U")]
+///     User,
+///     #[sql_as_value("G")]
+///     Guest
+/// }
+/// ```
+///
+/// This will store the enum variants as "A", "U", and "G" in the database instead of 
+/// "Admin", "User", and "Guest".
+///
+/// The generated code will be:
+///
+/// ```rust
+/// #[derive(Default, Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
+/// pub enum UserRole {
+///     #[default]
+///     Admin,
+///     User,
+///     Guest
+/// }
+/// sqld!(
+///     enum UserRole {
+///         Admin => "A",
+///         User => "U",
+///         Guest => "G"
+///     }
+/// );
+/// ```
+#[proc_macro_attribute]
+pub fn sql_as_value(_args: TokenStream, item: TokenStream) -> TokenStream {
+    item
 }

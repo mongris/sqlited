@@ -9,7 +9,7 @@ use thiserror::Error;
 pub use r2d2;
 pub use r2d2_sqlite;
 pub use rusqlite;
-pub use sqlited_macros::{table, sql, sql_params, sql_str, autoincrement, primary_key, unique, check, not_null, default, foreign_key, index, unique_index, constraint, migration};
+pub use sqlited_macros::{table, sql, sql_as, sql_as_value, sql_params, sql_str, autoincrement, primary_key, unique, check, not_null, default, foreign_key, index, unique_index, constraint, migration};
 
 pub extern crate rusqlite as rq;
 pub extern crate bincode;
@@ -40,19 +40,6 @@ pub mod prelude {
     pub use crate::types::*;
     pub use rusqlite::ToSql;
     pub use crate::connection::*;
-    pub use crate::{
-        autoincrement,
-        primary_key,
-        unique,
-        check,
-        not_null,
-        default,
-        foreign_key,
-        constraint,
-        index,
-        unique_index,
-        migration
-    };
 }
 
 pub use prelude::*;

@@ -2,32 +2,20 @@
 mod tests {
     use std::collections::HashMap;
 
-    use serde::{Deserialize, Serialize};
     use sqlited::{
-        prelude::*,
-        table,
-        sql,
-        sqld,
+        prelude::*, sql, sql_as, table
     };
 
     // 定义枚举
-    #[derive(Default, Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
+    #[sql_as(string)]
     pub enum Axis {
         #[default]
         Horizontal,
         Vertical,
     }
 
-    // 使用宏生成序列化类型
-    sqld!(
-        enum Axis {
-            Horizontal => "Horizontal",
-            Vertical => "Vertical",
-        }
-    );
-
     // 定义复杂结构体，用于二进制序列化
-    #[derive(Default, Clone, Debug, PartialEq, Serialize, Deserialize)]
+    #[sql_as(binary)]
     pub struct Layout {
         pub x: i32,
         pub y: i32,
@@ -37,19 +25,13 @@ mod tests {
         pub axis: Axis,
     }
 
-    // 使用二进制序列化
-    sqld!(binary Layout);
-
     // 定义复杂结构体，用于 JSON 序列化
-    #[derive(Default, Clone, Debug, PartialEq, Serialize, Deserialize)]
+    #[sql_as(json)]
     pub struct Config {
         pub name: String,
         pub settings: HashMap<String, String>,
         pub enabled_features: Vec<String>,
     }
-
-    // 使用 JSON 序列化
-    sqld!(json Config);
 
     // 定义测试表
     #[table]
