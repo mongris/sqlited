@@ -951,15 +951,10 @@ pub fn get_statement_key(statement: &str) -> String {
 }
 
 /// 定义数据库结构、表和迁移
-///
-/// 此宏允许以多种方式定义数据库：
-/// - 使用默认路径的静态引用（适合大多数应用）
-/// - 使用自定义路径的工厂方法（适合多实例或动态场景）
-/// - 在迁移数组中直接包含表定义
+/// 此宏允许定义带有自定义类型的数据库，使你可以为数据库结构实现自定义方法。
 ///
 /// # 示例
 ///
-/// ## 默认路径模式
 /// ```rust
 /// #[table]
 /// struct User {
@@ -969,39 +964,46 @@ pub fn get_statement_key(statement: &str) -> String {
 ///   email: String
 /// }
 /// define_db!(
-///   pub static ref USER_DB = [
+///   pub static ref USER_DB: UserDb<()> = [
 ///     User,
 ///     "CREATE INDEX IF NOT EXISTS users_email_idx ON users(email)"
 ///   ]
-/// )
-/// ```
-///
-/// ## 自定义路径模式
-/// ```rust
-/// #[table]
-/// struct Settings {
-///   key: String,
-///   value: String
-/// }
-/// define_db!(
-///   pub static ref CONFIG_DB(db_path: Option<PathBuf>) = [
-///     Settings
-///   ]
-/// )
+/// );
+/// let db = USER_DB::open(path_to_db);
+/// let memory_db = USER_DB::memory();
 /// 
-/// // 使用示例
-/// let db = CONFIG_DB.open(Some(path_to_db));
-/// let memory_db = CONFIG_DB.memory();
+/// // 添加自定义方法
+/// impl UserDb {
+///     pub fn get_user_by_name(&self, name: &str) -> Result<User> {
+///         self.query_row("SELECT * FROM user WHERE name = ?", [name], User::from_row)
+///     }
+/// }
 /// ```
 #[macro_export]
 macro_rules! define_db {
+    // 带自定义类型的版本
     (
-        pub static ref $id:ident(db_path: Option<PathBuf>) = [
+        pub static ref $id:ident: $t:ident<$($d:ty),*> = [
             $(
                 $element:tt
             ),* $(,)?
         ]
     ) => {
+        // 定义自定义结构体，包装 Database
+        pub struct $t {
+            db: Database
+        }
+
+        // 实现 Deref 以提供对底层数据库的访问
+        impl std::ops::Deref for $t {
+            type Target = Database;
+
+            fn deref(&self) -> &Self::Target {
+                &self.db
+            }
+        }
+
+        // 基本 Database 结构体定义
         pub struct Database {
             conn: $crate::connection::SqliteConnection,
             pool: std::sync::Arc<$crate::pool::ConnectionPool>,
@@ -1133,7 +1135,7 @@ macro_rules! define_db {
                             }
                             
                             // 对每条语句单独应用迁移逻辑
-                            let statement_hash = get_statement_key(statement);
+                            let statement_hash = $crate::macros::get_statement_key(statement);
 
                             // query_row now returns crate::error::Result, use ?
                             let count = self.conn.query_row(
@@ -1216,13 +1218,12 @@ macro_rules! define_db {
                 }
             }
         }
-
-        #[allow(non_camel_case_types)]
-        pub struct $id {}
         
-        impl $id {
+        // 为自定义类型提供方法
+        #[allow(non_camel_case_types)]
+        impl $t {
             /// 打开给定路径的数据库（如果为None则使用内存模式）
-            pub fn open(path: Option<impl AsRef<std::path::Path>>) -> $crate::error::Result<Database> {
+            fn _open(path: Option<impl AsRef<std::path::Path>>) -> $crate::error::Result<Self> {
                 match path {
                     Some(path) => {
                         let path_buf = path.as_ref().to_path_buf();
@@ -1266,7 +1267,7 @@ macro_rules! define_db {
                         let conn = $crate::connection::get_connection(&pool)?;
                         let db = Database::new(conn, pool);
                         db.apply_migrations()?;
-                        Ok(db)
+                        Ok(Self { db })
                     },
                     None => {
                         // new_memory_pool returns Result<_, PoolError>, map it
@@ -1279,258 +1280,68 @@ macro_rules! define_db {
                         let conn = $crate::connection::get_connection(&pool)?;
                         let db = Database::new(conn, pool);
                         db.apply_migrations()?; // Use ? here
-                        Ok(db)
+                        Ok(Self { db })
                     }
                 }
             }
+
+            /// 打开指定路径的数据库
+            pub fn open(path: impl AsRef<std::path::Path>) -> $crate::Result<Self> {
+                Self::_open(Some(path))
+            }
             
             /// 打开内存数据库
-            pub fn memory() -> $crate::Result<Database> {
-                Self::open(None::<&std::path::Path>)
+            pub fn memory() -> $crate::Result<Self> {
+                Self::_open(None::<&std::path::Path>)
             }
             
             /// 在临时位置创建数据库
-            pub fn temp() -> $crate::Result<Database> {
+            pub fn temp() -> $crate::Result<Self> {
                 let temp_dir = std::env::temp_dir();
                 let db_file = temp_dir.join(format!("sqlited_{}.db", uuid::Uuid::new_v4()));
-                Self::open(Some(db_file))
+                Self::_open(Some(db_file))
             }
             
             /// 打开共享内存数据库（使用命名内存数据库）
-            pub fn shared_memory(name: &str) -> $crate::Result<Database> {
+            pub fn shared_memory(name: &str) -> $crate::Result<Self> {
                 // 正确的共享内存语法，注意必须以 "file:" 开头
                 let memory_path = format!("file:{}?mode=memory&cache=shared", name);
                 
                 // 使用标准 open 方法
-                Self::open(Some(memory_path))
-            }
-        }
-        
-        // 创建一个单例实例
-        #[allow(non_upper_case_globals)]
-        pub static $id: $id = $id {};
-    };
-    
-    // 标准版本（无路径参数，使用标准环境/默认路径）
-    (
-        pub static ref $id:ident = [
-            $(
-                $element:expr
-            ),* $(,)?
-        ]
-    ) => {
-        // 处理表定义和SQL迁移
-        const _MIGRATIONS: &[&str] = &[
-            $(
-                $crate::_process_migration_element!($element)
-            ),*
-        ];
-
-        // 提取并定义表类型
-        $(
-            $crate::_extract_table_definition!($element);
-        )*
-
-        // 定义数据库结构
-        pub struct Database {
-            conn: $crate::connection::SqliteConnection,
-            $(
-                $crate::_extract_table_field!($element)
-            )*
-        }
-
-        impl std::ops::Deref for Database {
-            type Target = $crate::connection::SqliteConnection;
-
-            fn deref(&self) -> &Self::Target {
-                &self.conn
-            }
-        }
-        
-        impl Database {
-            fn new(conn: $crate::connection::SqliteConnection) -> Self {
-                Self {
-                    $(
-                        $crate::_extract_table_instance!($element, conn.clone())
-                    )*
-                    conn,
-                }
+                Self::_open(Some(memory_path))
             }
             
-            pub fn raw_connection(&self) -> &$crate::connection::SqliteConnection {
-                &self.conn
-            }
-
-            // 获取表的所有迁移
-            fn get_all_table_migrations() -> Vec<(String, String, Option<String>)> {
-                let mut migrations = Vec::new();
-                
-                // 收集所有表的迁移
-                $(
-                    if let Some(table_migrations) = $crate::_collect_table_migrations!($element) {
-                        migrations.extend(table_migrations);
-                    }
-                )*
-                
-                migrations
+            /// 获取一个到同一数据库的新连接
+            pub fn new_connection(&self) -> $crate::error::Result<Self> {
+                let new_db = self.db.new_connection()?;
+                Ok(Self { db: new_db })
             }
             
-            // 应用迁移到此数据库
-            fn apply_migrations(&self) -> $crate::error::Result<()> {
-                // 创建迁移表（如果不存在）
-                self.conn.execute(
-                    "CREATE TABLE IF NOT EXISTS _sqlited_migrations (
-                        id INTEGER PRIMARY KEY,
-                        name TEXT NOT NULL,
-                        applied_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
-                    )",
-                    [],
-                )?;
-
-                // 获取所有表定义的迁移
-                let table_migrations = Self::get_all_table_migrations();
-                
-                // 使用事务确保原子性
-                self.conn.execute("BEGIN TRANSACTION", [])?;
-                
-                let mut success = true;
-
-                // 首先应用表迁移
-                for (name, up_sql, _) in table_migrations {
-                    if name.starts_with("error") {
-                        println!("Skipping invalid migration: {}", up_sql);
-                        continue;
-                    }
-
-                    let already_applied = self.conn.query_row(
-                        "SELECT COUNT(*) FROM _sqlited_migrations WHERE name = ?",
-                        [&name],
-                        |row| row.get::<_, i32>(0),
-                    ).unwrap_or(0) > 0;
-                    
-                    if !already_applied {
-                        // 按分号拆分多个 SQL 语句
-                        let statements = up_sql.split(';')
-                            .map(|s| s.trim())
-                            .filter(|s| !s.is_empty())
-                            .collect::<Vec<_>>();
-                        
-                        for statement in &statements {
-                            match self.conn.execute(statement, []) {
-                                Ok(_) => {},
-                                Err(e) => {
-                                    eprintln!("Failed to apply migration {}: {}", name, e);
-                                    success = false;
-                                    break;
-                                }
-                            }
-                        }
-                        
-                        // 记录已应用的迁移
-                        if success {
-                            if let Err(e) = self.conn.execute(
-                                "INSERT INTO _sqlited_migrations (name) VALUES (?)",
-                                [&name],
-                            ) {
-                                eprintln!("Failed to record migration {}: {}", name, e);
-                                success = false;
-                            }
-                        }
-                    }
-                    
-                    if !success {
-                        break;
-                    }
-                }
-
-                // 按顺序应用其他所有迁移
-                if success{
-                    for migration in Self::get_migrations() {
-                        // 按分号拆分多个 SQL 语句
-                        let statements = migration.split(';')
-                            .map(|s| s.trim())
-                            .filter(|s| !s.is_empty())
-                            .collect::<Vec<_>>();
-                        
-                        for statement in &statements {
-                            if statement.is_empty() {
-                                continue;
-                            }
-                            
-                            // 对每条语句单独应用迁移逻辑
-                            let statement_hash = format!("{:x}", md5::compute(statement));
-                            let already_applied = self.conn.query_row(
-                                "SELECT COUNT(*) FROM _sqlited_migrations WHERE name = ?",
-                                [&statement_hash],
-                                |row| row.get::<_, i32>(0),
-                            ).unwrap_or(0) > 0;
-                            
-                            if !already_applied {
-                                match self.conn.execute(statement, []) {
-                                    Ok(_) => {
-                                        // 记录已应用的迁移
-                                        if let Err(e) = self.conn.execute(
-                                            "INSERT INTO _sqlited_migrations (name) VALUES (?)",
-                                            [&statement_hash],
-                                        ) {
-                                            eprintln!("Failed to record migration: {}", e);
-                                            success = false;
-                                            break;
-                                        }
-                                    },
-                                    Err(e) => {
-                                        eprintln!("Failed to apply migration: {}", e);
-                                        success = false;
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                
-                // 根据迁移结果提交或回滚
-                if success {
-                    self.conn.execute("COMMIT", [])?;
-                } else {
-                    // 回滚所有变更
-                    self.conn.execute("ROLLBACK", [])?;
-                    return Err($crate::rq::Error::SqliteFailure(
-                        $crate::rq::ffi::Error {
-                            code: $crate::rq::ffi::ErrorCode::InternalMalfunction,
-                            extended_code: 1
-                        },
-                        Some("Failed to apply migrations".to_string())
-                    ));
-                }
-                
-                Ok(())
-            }
-            
-            // 在事务中执行闭包，自动处理提交和回滚
+            /// 在事务中执行闭包，自动处理提交和回滚
             pub fn transaction<T, F>(&self, f: F) -> $crate::error::Result<T>
             where
                 F: FnOnce(&Self) -> $crate::error::Result<T>,
             {
                 self.conn.execute("BEGIN TRANSACTION", [])?;
-                
+
                 match f(self) {
                     Ok(result) => {
                         self.conn.execute("COMMIT", [])?;
                         Ok(result)
                     },
                     Err(e) => {
+                        // 尝试回滚，忽略回滚错误
                         let _ = self.conn.execute("ROLLBACK", []);
-                        Err(e)
+                        Err(e) // 传播原始错误
                     }
                 }
             }
-            
-            // 获取静态引用
-            pub fn get() -> &'static Self {
-                &$id
-            }
         }
+        
+        // 为保持与现有代码兼容，定义类型别名
+        #[allow(non_upper_case_globals)]
+        #[allow(non_camel_case_types)]
+        pub type $id = $t;
     };
 }
 

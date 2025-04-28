@@ -117,7 +117,7 @@ mod tests {
 
     // 定义测试数据库
     define_db!(
-        pub static ref ATTR_TEST_DB(db_path: Option<PathBuf>) = [
+        pub static ref ATTR_TEST_DB: AttrTestDb<()> = [
             BasicTable,
             DefaultValuesTable,
             UniqueTable,

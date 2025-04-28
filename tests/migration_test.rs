@@ -82,7 +82,7 @@ use sqlited::{
 
   // 定义初始数据库 - 创建所有初始表结构
   define_db!(
-      pub static ref INITIAL_DB(db_path: Option<PathBuf>) = [
+      pub static ref INITIAL_DB: InitialDb<()> = [
           User,
           Post,
           Contact,
@@ -97,7 +97,7 @@ use sqlited::{
   // 初始化数据库并插入一些测试数据
   pub fn initialize_test_db(db_path: &str) {
       // 创建或打开指定路径的数据库
-      let db = INITIAL_DB::open(Some(db_path)).unwrap();
+      let db = INITIAL_DB::open(db_path).unwrap();
       
       // 插入一些测试数据
       db.execute(
@@ -233,7 +233,7 @@ mod migration_tests {
 
   // 定义升级后的数据库
   define_db!(
-      pub static ref MIGRATED_DB(db_path: Option<PathBuf>) = [
+      pub static ref MIGRATED_DB: MigratedDb<()> = [
           User,
           Post,
           Contact,
@@ -256,7 +256,7 @@ mod migration_tests {
       super::initial_schema::initialize_test_db(&db_path);
       
       // 应用迁移
-      let db = MIGRATED_DB::open(Some(&db_path)).unwrap();
+      let db = MIGRATED_DB::open(&db_path).unwrap();
       // db.apply_migrations().unwrap();
       
       // 测试添加列迁移

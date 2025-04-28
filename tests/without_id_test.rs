@@ -42,7 +42,7 @@ mod tests {
 
     // 使用 define_db 定义测试数据库
     define_db!(
-        pub static ref TEST_DB(db_path: Option<PathBuf>) = [
+        pub static ref TEST_DB: TestDb<()> = [
             User,
             TestPost,
             
