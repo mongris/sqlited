@@ -4,13 +4,14 @@ use std::sync::{LazyLock, Mutex, Arc};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use crate::pool::ConnectionPool;
+
 /// Structure that holds a SQL query and its parameters
 pub struct SqlQuery {
     pub query: String,
-    pub params: Vec<Box<dyn rusqlite::ToSql>>,
+    pub params: Vec<Box<dyn crate::rq::ToSql>>,
 }
 
-// Custom Debug implementation since dyn rusqlite::ToSql doesn't implement Debug
+// Custom Debug implementation since dyn $crate::rq::ToSql doesn't implement Debug
 impl std::fmt::Debug for SqlQuery {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SqlQuery")
@@ -31,10 +32,10 @@ impl SqlQuery {
 
     /// Execute the query on the provided connection
     pub fn execute(&self, conn: &SqliteConnection) -> Result<usize> {
-        let param_refs: Vec<&dyn rusqlite::ToSql> = self
+        let param_refs: Vec<&dyn crate::rq::ToSql> = self
             .params
             .iter()
-            .map(|p| p.as_ref() as &dyn rusqlite::ToSql)
+            .map(|p| p.as_ref() as &dyn crate::rq::ToSql)
             .collect();
         conn.execute(&self.query, param_refs.as_slice())
     }
@@ -42,31 +43,31 @@ impl SqlQuery {
     /// Query multiple rows and map each to a value using the provided function
     pub fn query_map<T, F>(&self, conn: &SqliteConnection, f: F) -> Result<Vec<T>>
     where
-        F: FnMut(&rusqlite::Row<'_>) -> rusqlite::Result<T>,
+        F: FnMut(&crate::rq::Row<'_>) -> crate::rq::Result<T>,
     {
         let mut stmt = conn.raw_connection().prepare(&self.query)?;
-        let param_refs: Vec<&dyn rusqlite::ToSql> = self
+        let param_refs: Vec<&dyn crate::rq::ToSql> = self
             .params
             .iter()
-            .map(|p| p.as_ref() as &dyn rusqlite::ToSql)
+            .map(|p| p.as_ref() as &dyn crate::rq::ToSql)
             .collect();        
-        // query_map returns rusqlite::Result, ? converts it to SqlitedError via From
+        // query_map returns $crate::rq::Result, ? converts it to SqlitedError via From
         let rows = stmt.query_map(param_refs.as_slice(), f)?;
-        // collect returns rusqlite::Result<Vec<T>>, map_err converts the error via From
+        // collect returns $crate::rq::Result<Vec<T>>, map_err converts the error via From
         // Add turbofish annotation to help type inference
-        rows.collect::<rusqlite::Result<Vec<T>>>().map_err(SqlitedError::from)
+        rows.collect::<crate::rq::Result<Vec<T>>>().map_err(SqlitedError::from)
     }
 
     /// Query a single row and map it to a value using the provided function
     pub fn query_row<T, F>(&self, conn: &SqliteConnection, f: F) -> Result<T>
     where
-        F: FnOnce(&rusqlite::Row<'_>) -> rusqlite::Result<T>,
+        F: FnOnce(&crate::rq::Row<'_>) -> crate::rq::Result<T>,
     {
         let mut stmt = conn.raw_connection().prepare(&self.query)?;
-        let param_refs: Vec<&dyn rusqlite::ToSql> = self
+        let param_refs: Vec<&dyn crate::rq::ToSql> = self
             .params
             .iter()
-            .map(|p| p.as_ref() as &dyn rusqlite::ToSql)
+            .map(|p| p.as_ref() as &dyn crate::rq::ToSql)
             .collect();
         stmt.query_row(param_refs.as_slice(), f).map_err(SqlitedError::from)
     }
@@ -169,38 +170,38 @@ macro_rules! sqld {
         }
     ) => {
         impl $crate::SqliteBindableValue for $enum_type {
-            fn to_sql_value(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
+            fn to_sql_value(&self) -> $crate::rq::Result<$crate::rq::types::ToSqlOutput<'_>> {
                 let value = match self {
                     $(
                         $enum_type::$variant => $value,
                     )+
                 };
-                Ok(rusqlite::types::ToSqlOutput::from(value))
+                Ok($crate::rq::types::ToSqlOutput::from(value))
             }
             
-            fn from_sql_value(value: rusqlite::types::ValueRef<'_>) -> Result<Self, rusqlite::types::FromSqlError> {
-                use rusqlite::types::FromSql;
+            fn from_sql_value(value: $crate::rq::types::ValueRef<'_>) -> Result<Self, $crate::rq::types::FromSqlError> {
+                use $crate::rq::types::FromSql;
                 String::column_result(value).and_then(|s| {
                     match s.as_str() {
                         $(
                             $value => Ok($enum_type::$variant),
                         )+
-                        _ => Err(rusqlite::types::FromSqlError::InvalidType),
+                        _ => Err($crate::rq::types::FromSqlError::InvalidType),
                     }
                 })
             }
         }
 
         // 直接实现 ToSql 特征
-        impl rusqlite::ToSql for $enum_type {
-            fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
+        impl $crate::rq::ToSql for $enum_type {
+            fn to_sql(&self) -> $crate::rq::Result<$crate::rq::types::ToSqlOutput<'_>> {
                 self.to_sql_value()
             }
         }
         
         // 直接实现 FromSql 特征
-        impl rusqlite::types::FromSql for $enum_type {
-            fn column_result(value: rusqlite::types::ValueRef<'_>) -> Result<Self, rusqlite::types::FromSqlError> {
+        impl $crate::rq::types::FromSql for $enum_type {
+            fn column_result(value: $crate::rq::types::ValueRef<'_>) -> Result<Self, $crate::rq::types::FromSqlError> {
                 Self::from_sql_value(value)
             }
         }
@@ -218,21 +219,21 @@ macro_rules! sqld {
         binary $type:ty
     ) => {
         impl $crate::SqliteBindableValue for $type {
-            fn to_sql_value(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
+            fn to_sql_value(&self) -> $crate::rq::Result<$crate::rq::types::ToSqlOutput<'_>> {
                 match bincode::serialize(&self) {
-                    Ok(bytes) => Ok(rusqlite::types::ToSqlOutput::from(bytes)),
-                    Err(err) => Err(rusqlite::Error::ToSqlConversionFailure(
+                    Ok(bytes) => Ok($crate::rq::types::ToSqlOutput::from(bytes)),
+                    Err(err) => Err($crate::rq::Error::ToSqlConversionFailure(
                         Box::new(err)
                     ))
                 }
             }
             
-            fn from_sql_value(value: rusqlite::types::ValueRef<'_>) -> Result<Self, rusqlite::types::FromSqlError> {
-                use rusqlite::types::FromSql;
+            fn from_sql_value(value: $crate::rq::types::ValueRef<'_>) -> Result<Self, $crate::rq::types::FromSqlError> {
+                use $crate::rq::types::FromSql;
                 Vec::<u8>::column_result(value).and_then(|bytes| {
                     match bincode::deserialize::<$type>(&bytes) {
                         Ok(obj) => Ok(obj),
-                        Err(err) => Err(rusqlite::types::FromSqlError::Other(
+                        Err(err) => Err($crate::rq::types::FromSqlError::Other(
                             Box::new(err)
                         ))
                     }
@@ -245,15 +246,15 @@ macro_rules! sqld {
         }
         
         // 直接实现 ToSql 特征
-        impl rusqlite::ToSql for $type {
-            fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
+        impl $crate::rq::ToSql for $type {
+            fn to_sql(&self) -> $crate::rq::Result<$crate::rq::types::ToSqlOutput<'_>> {
                 self.to_sql_value()
             }
         }
         
         // 直接实现 FromSql 特征
-        impl rusqlite::types::FromSql for $type {
-            fn column_result(value: rusqlite::types::ValueRef<'_>) -> Result<Self, rusqlite::types::FromSqlError> {
+        impl $crate::rq::types::FromSql for $type {
+            fn column_result(value: $crate::rq::types::ValueRef<'_>) -> Result<Self, $crate::rq::types::FromSqlError> {
                 Self::from_sql_value(value)
             }
         }
@@ -271,22 +272,22 @@ macro_rules! sqld {
         json $type:ty
     ) => {
         impl $crate::SqliteBindableValue for $type {
-            fn to_sql_value(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
+            fn to_sql_value(&self) -> $crate::rq::Result<$crate::rq::types::ToSqlOutput<'_>> {
                 // 使用 serde_json 序列化为字符串
                 match serde_json::to_string(&self) {
-                    Ok(json) => Ok(rusqlite::types::ToSqlOutput::from(json)),
-                    Err(err) => Err(rusqlite::Error::ToSqlConversionFailure(
+                    Ok(json) => Ok($crate::rq::types::ToSqlOutput::from(json)),
+                    Err(err) => Err($crate::rq::Error::ToSqlConversionFailure(
                         Box::new(err)
                     ))
                 }
             }
             
-            fn from_sql_value(value: rusqlite::types::ValueRef<'_>) -> Result<Self, rusqlite::types::FromSqlError> {
-                use rusqlite::types::FromSql;
+            fn from_sql_value(value: $crate::rq::types::ValueRef<'_>) -> Result<Self, $crate::rq::types::FromSqlError> {
+                use $crate::rq::types::FromSql;
                 String::column_result(value).and_then(|json_str| {
                     match serde_json::from_str::<$type>(&json_str) {
                         Ok(obj) => Ok(obj),
-                        Err(err) => Err(rusqlite::types::FromSqlError::Other(
+                        Err(err) => Err($crate::rq::types::FromSqlError::Other(
                             Box::new(err)
                         ))
                     }
@@ -295,15 +296,15 @@ macro_rules! sqld {
         }
         
         // 直接实现 ToSql 特征
-        impl rusqlite::ToSql for $type {
-            fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
+        impl $crate::rq::ToSql for $type {
+            fn to_sql(&self) -> $crate::rq::Result<$crate::rq::types::ToSqlOutput<'_>> {
                 self.to_sql_value()
             }
         }
         
         // 直接实现 FromSql 特征
-        impl rusqlite::types::FromSql for $type {
-            fn column_result(value: rusqlite::types::ValueRef<'_>) -> Result<Self, rusqlite::types::FromSqlError> {
+        impl $crate::rq::types::FromSql for $type {
+            fn column_result(value: $crate::rq::types::ValueRef<'_>) -> Result<Self, $crate::rq::types::FromSqlError> {
                 Self::from_sql_value(value)
             }
         }
@@ -333,10 +334,10 @@ macro_rules! sqld {
 /// 表示可以存储到 SQLite 中的自定义类型
 pub trait SqliteBindableValue {
     /// 将自定义类型转换为 SQLite 值
-    fn to_sql_value(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>>;
+    fn to_sql_value(&self) -> crate::rq::Result<crate::rq::types::ToSqlOutput<'_>>;
     
     /// 从 SQLite 值转换为此类型
-    fn from_sql_value(value: rusqlite::types::ValueRef<'_>) -> rusqlite::Result<Self, rusqlite::types::FromSqlError> where Self: Sized;
+    fn from_sql_value(value: crate::rq::types::ValueRef<'_>) -> crate::rq::Result<Self, crate::rq::types::FromSqlError> where Self: Sized;
     
     /// 返回此类型在 SQLite 中的类型名称
     fn sqlite_type_name() -> &'static str {
@@ -355,15 +356,15 @@ impl<T: SqliteBindableValue + Default + Clone + std::fmt::Debug> Default for Sql
 }
 
 // 为包装器类型实现 FromSql
-impl<T: SqliteBindableValue + Default + Clone + std::fmt::Debug> rusqlite::types::FromSql for SqliteCustomType<T> {
-    fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::Result<Self, rusqlite::types::FromSqlError> {
+impl<T: SqliteBindableValue + Default + Clone + std::fmt::Debug> crate::rq::types::FromSql for SqliteCustomType<T> {
+    fn column_result(value: crate::rq::types::ValueRef<'_>) -> crate::rq::Result<Self, crate::rq::types::FromSqlError> {
         T::from_sql_value(value).map(SqliteCustomType)
     }
 }
 
 // 为包装器类型实现 ToSql
-impl<T: SqliteBindableValue + Default + Clone + std::fmt::Debug> rusqlite::ToSql for SqliteCustomType<T> {
-    fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
+impl<T: SqliteBindableValue + Default + Clone + std::fmt::Debug> crate::rq::ToSql for SqliteCustomType<T> {
+    fn to_sql(&self) -> crate::rq::Result<crate::rq::types::ToSqlOutput<'_>> {
         self.0.to_sql_value()
     }
 }
@@ -377,7 +378,7 @@ impl<T: SqliteBindableValue + Default + Clone + std::fmt::Debug> crate::macros::
 
 /// 通用的 WithoutId 结构体，用于自增 ID 表的插入操作
 pub struct WithoutId<T> {
-    pub inner: std::collections::HashMap<String, Box<dyn rusqlite::ToSql>>,
+    pub inner: std::collections::HashMap<String, Box<dyn crate::rq::ToSql>>,
     _marker: std::marker::PhantomData<T>,
 }
 
@@ -402,7 +403,7 @@ impl<T: 'static> Clone for WithoutId<T> {
             // Option<String> 实现了 ToSql，并且 None 会被视为 NULL
             result.inner.insert(
                 key.clone(),
-                Box::new(Option::<String>::None) as Box<dyn rusqlite::ToSql>,
+                Box::new(Option::<String>::None) as Box<dyn crate::rq::ToSql>,
             );
         }
 
@@ -420,28 +421,28 @@ impl<T> WithoutId<T> {
     }
 
     /// 设置字段值
-    pub fn set<V: rusqlite::ToSql + 'static>(&mut self, field: &str, value: V) -> &mut Self {
+    pub fn set<V: crate::rq::ToSql + 'static>(&mut self, field: &str, value: V) -> &mut Self {
         self.inner.insert(field.to_lowercase(), Box::new(value));
         self
     }
 
     /// 获取此结构体中的参数列表，按照给定的字段名顺序
-    pub fn to_params_ordered(&self, field_names: &[String]) -> Vec<&dyn rusqlite::ToSql> {
+    pub fn to_params_ordered(&self, field_names: &[String]) -> Vec<&dyn crate::rq::ToSql> {
         field_names
             .iter()
             .filter_map(|name| {
                 self.inner
                     .get(name)
-                    .map(|v| v.as_ref() as &dyn rusqlite::ToSql)
+                    .map(|v| v.as_ref() as &dyn crate::rq::ToSql)
             })
             .collect()
     }
 
     /// 获取此结构体中的参数列表（无序）
-    pub fn to_params(&self) -> Vec<&dyn rusqlite::ToSql> {
+    pub fn to_params(&self) -> Vec<&dyn crate::rq::ToSql> {
         self.inner
             .values()
-            .map(|v| v.as_ref() as &dyn rusqlite::ToSql)
+            .map(|v| v.as_ref() as &dyn crate::rq::ToSql)
             .collect()
     }
 
@@ -451,14 +452,14 @@ impl<T> WithoutId<T> {
     }
 
     /// 获取字段值（如果存在）
-    pub fn get_field(&self, field_name: &str) -> Option<&dyn rusqlite::ToSql> {
+    pub fn get_field(&self, field_name: &str) -> Option<&dyn crate::rq::ToSql> {
         self.inner
             .get(&field_name.to_lowercase())
-            .map(|v| v.as_ref() as &dyn rusqlite::ToSql)
+            .map(|v| v.as_ref() as &dyn crate::rq::ToSql)
     }
 
     /// 获取用于插入的参数（自动处理 NULL 值）
-    pub fn params_for_insert<M>(&self) -> Vec<&dyn rusqlite::ToSql>
+    pub fn params_for_insert<M>(&self) -> Vec<&dyn crate::rq::ToSql>
     where
         M: WithoutIdTableInfo,
     {
@@ -467,10 +468,10 @@ impl<T> WithoutId<T> {
 
         for field_name in field_names {
             if let Some(value) = self.inner.get(&field_name.to_lowercase()) {
-                params.push(value.as_ref() as &dyn rusqlite::ToSql);
+                params.push(value.as_ref() as &dyn crate::rq::ToSql);
             } else {
                 // 对于缺失的字段，使用 NULL
-                params.push(&None::<String> as &dyn rusqlite::ToSql);
+                params.push(&None::<String> as &dyn crate::rq::ToSql);
             }
         }
 
@@ -492,50 +493,50 @@ impl<T> WithoutId<T> {
                 // 对于基本类型，我们可以通过尝试将值转换为各种可能的类型
                 let sql_output = value.to_sql().unwrap_or_else(|_| {
                     // 使用 &Value::Null 而不是 Value::Null
-                    rusqlite::types::ToSqlOutput::from(&rusqlite::types::Value::Null)
+                    crate::rq::types::ToSqlOutput::from(&crate::rq::types::Value::Null)
                 });
 
                 match sql_output {
-                    rusqlite::types::ToSqlOutput::Borrowed(rusqlite::types::ValueRef::Integer(
+                    crate::rq::types::ToSqlOutput::Borrowed(crate::rq::types::ValueRef::Integer(
                         i,
-                    )) => boxed_params.push(Box::new(i) as Box<dyn rusqlite::ToSql>),
-                    rusqlite::types::ToSqlOutput::Borrowed(rusqlite::types::ValueRef::Real(r)) => {
-                        boxed_params.push(Box::new(r) as Box<dyn rusqlite::ToSql>)
+                    )) => boxed_params.push(Box::new(i) as Box<dyn crate::rq::ToSql>),
+                    crate::rq::types::ToSqlOutput::Borrowed(crate::rq::types::ValueRef::Real(r)) => {
+                        boxed_params.push(Box::new(r) as Box<dyn crate::rq::ToSql>)
                     }
-                    rusqlite::types::ToSqlOutput::Borrowed(rusqlite::types::ValueRef::Text(t)) => {
+                    crate::rq::types::ToSqlOutput::Borrowed(crate::rq::types::ValueRef::Text(t)) => {
                         boxed_params.push(Box::new(String::from_utf8_lossy(t).into_owned())
-                            as Box<dyn rusqlite::ToSql>)
+                            as Box<dyn crate::rq::ToSql>)
                     }
-                    rusqlite::types::ToSqlOutput::Borrowed(rusqlite::types::ValueRef::Blob(b)) => {
-                        boxed_params.push(Box::new(b.to_vec()) as Box<dyn rusqlite::ToSql>)
+                    crate::rq::types::ToSqlOutput::Borrowed(crate::rq::types::ValueRef::Blob(b)) => {
+                        boxed_params.push(Box::new(b.to_vec()) as Box<dyn crate::rq::ToSql>)
                     }
-                    rusqlite::types::ToSqlOutput::Borrowed(rusqlite::types::ValueRef::Null) => {
+                    crate::rq::types::ToSqlOutput::Borrowed(crate::rq::types::ValueRef::Null) => {
                         boxed_params
-                            .push(Box::new(Option::<String>::None) as Box<dyn rusqlite::ToSql>)
+                            .push(Box::new(Option::<String>::None) as Box<dyn crate::rq::ToSql>)
                     }
-                    rusqlite::types::ToSqlOutput::Owned(rusqlite::types::Value::Integer(i)) => {
-                        boxed_params.push(Box::new(i) as Box<dyn rusqlite::ToSql>)
+                    crate::rq::types::ToSqlOutput::Owned(crate::rq::types::Value::Integer(i)) => {
+                        boxed_params.push(Box::new(i) as Box<dyn crate::rq::ToSql>)
                     }
-                    rusqlite::types::ToSqlOutput::Owned(rusqlite::types::Value::Real(r)) => {
-                        boxed_params.push(Box::new(r) as Box<dyn rusqlite::ToSql>)
+                    crate::rq::types::ToSqlOutput::Owned(crate::rq::types::Value::Real(r)) => {
+                        boxed_params.push(Box::new(r) as Box<dyn crate::rq::ToSql>)
                     }
-                    rusqlite::types::ToSqlOutput::Owned(rusqlite::types::Value::Text(t)) => {
-                        boxed_params.push(Box::new(t) as Box<dyn rusqlite::ToSql>)
+                    crate::rq::types::ToSqlOutput::Owned(crate::rq::types::Value::Text(t)) => {
+                        boxed_params.push(Box::new(t) as Box<dyn crate::rq::ToSql>)
                     }
-                    rusqlite::types::ToSqlOutput::Owned(rusqlite::types::Value::Blob(b)) => {
-                        boxed_params.push(Box::new(b) as Box<dyn rusqlite::ToSql>)
+                    crate::rq::types::ToSqlOutput::Owned(crate::rq::types::Value::Blob(b)) => {
+                        boxed_params.push(Box::new(b) as Box<dyn crate::rq::ToSql>)
                     }
-                    rusqlite::types::ToSqlOutput::Owned(rusqlite::types::Value::Null) => {
+                    crate::rq::types::ToSqlOutput::Owned(crate::rq::types::Value::Null) => {
                         boxed_params
-                            .push(Box::new(Option::<String>::None) as Box<dyn rusqlite::ToSql>)
+                            .push(Box::new(Option::<String>::None) as Box<dyn crate::rq::ToSql>)
                     }
                     // 添加通配符模式以处理未来可能添加的变体
                     _ => boxed_params
-                        .push(Box::new(Option::<String>::None) as Box<dyn rusqlite::ToSql>),
+                        .push(Box::new(Option::<String>::None) as Box<dyn crate::rq::ToSql>),
                 }
             } else {
                 // 对于缺失的字段，使用 NULL
-                boxed_params.push(Box::new(Option::<String>::None) as Box<dyn rusqlite::ToSql>);
+                boxed_params.push(Box::new(Option::<String>::None) as Box<dyn crate::rq::ToSql>);
             }
         }
 
@@ -554,46 +555,46 @@ impl<T> WithoutId<T> {
             if let Some(value) = self.inner.get(field_name) {
                 // Convert the value to SQL representation as in the original method
                 let sql_output = value.to_sql().unwrap_or_else(|_| {
-                    rusqlite::types::ToSqlOutput::from(&rusqlite::types::Value::Null)
+                    crate::rq::types::ToSqlOutput::from(&crate::rq::types::Value::Null)
                 });
 
                 match sql_output {
-                    rusqlite::types::ToSqlOutput::Borrowed(rusqlite::types::ValueRef::Integer(
+                    crate::rq::types::ToSqlOutput::Borrowed(crate::rq::types::ValueRef::Integer(
                         i,
-                    )) => boxed_params.push(Box::new(i) as Box<dyn rusqlite::ToSql>),
-                    rusqlite::types::ToSqlOutput::Borrowed(rusqlite::types::ValueRef::Real(r)) => {
-                        boxed_params.push(Box::new(r) as Box<dyn rusqlite::ToSql>)
+                    )) => boxed_params.push(Box::new(i) as Box<dyn crate::rq::ToSql>),
+                    crate::rq::types::ToSqlOutput::Borrowed(crate::rq::types::ValueRef::Real(r)) => {
+                        boxed_params.push(Box::new(r) as Box<dyn crate::rq::ToSql>)
                     }
-                    rusqlite::types::ToSqlOutput::Borrowed(rusqlite::types::ValueRef::Text(t)) => {
+                    crate::rq::types::ToSqlOutput::Borrowed(crate::rq::types::ValueRef::Text(t)) => {
                         boxed_params.push(Box::new(String::from_utf8_lossy(t).into_owned())
-                            as Box<dyn rusqlite::ToSql>)
+                            as Box<dyn crate::rq::ToSql>)
                     }
-                    rusqlite::types::ToSqlOutput::Borrowed(rusqlite::types::ValueRef::Blob(b)) => {
-                        boxed_params.push(Box::new(b.to_vec()) as Box<dyn rusqlite::ToSql>)
+                    crate::rq::types::ToSqlOutput::Borrowed(crate::rq::types::ValueRef::Blob(b)) => {
+                        boxed_params.push(Box::new(b.to_vec()) as Box<dyn crate::rq::ToSql>)
                     }
-                    rusqlite::types::ToSqlOutput::Borrowed(rusqlite::types::ValueRef::Null) => {
+                    crate::rq::types::ToSqlOutput::Borrowed(crate::rq::types::ValueRef::Null) => {
                         boxed_params
-                            .push(Box::new(Option::<String>::None) as Box<dyn rusqlite::ToSql>)
+                            .push(Box::new(Option::<String>::None) as Box<dyn crate::rq::ToSql>)
                     }
-                    rusqlite::types::ToSqlOutput::Owned(rusqlite::types::Value::Integer(i)) => {
-                        boxed_params.push(Box::new(i) as Box<dyn rusqlite::ToSql>)
+                    crate::rq::types::ToSqlOutput::Owned(crate::rq::types::Value::Integer(i)) => {
+                        boxed_params.push(Box::new(i) as Box<dyn crate::rq::ToSql>)
                     }
-                    rusqlite::types::ToSqlOutput::Owned(rusqlite::types::Value::Real(r)) => {
-                        boxed_params.push(Box::new(r) as Box<dyn rusqlite::ToSql>)
+                    crate::rq::types::ToSqlOutput::Owned(crate::rq::types::Value::Real(r)) => {
+                        boxed_params.push(Box::new(r) as Box<dyn crate::rq::ToSql>)
                     }
-                    rusqlite::types::ToSqlOutput::Owned(rusqlite::types::Value::Text(t)) => {
-                        boxed_params.push(Box::new(t) as Box<dyn rusqlite::ToSql>)
+                    crate::rq::types::ToSqlOutput::Owned(crate::rq::types::Value::Text(t)) => {
+                        boxed_params.push(Box::new(t) as Box<dyn crate::rq::ToSql>)
                     }
-                    rusqlite::types::ToSqlOutput::Owned(rusqlite::types::Value::Blob(b)) => {
-                        boxed_params.push(Box::new(b) as Box<dyn rusqlite::ToSql>)
+                    crate::rq::types::ToSqlOutput::Owned(crate::rq::types::Value::Blob(b)) => {
+                        boxed_params.push(Box::new(b) as Box<dyn crate::rq::ToSql>)
                     }
-                    rusqlite::types::ToSqlOutput::Owned(rusqlite::types::Value::Null) => {
+                    crate::rq::types::ToSqlOutput::Owned(crate::rq::types::Value::Null) => {
                         boxed_params
-                            .push(Box::new(Option::<String>::None) as Box<dyn rusqlite::ToSql>)
+                            .push(Box::new(Option::<String>::None) as Box<dyn crate::rq::ToSql>)
                     }
                     // Add wildcard pattern to handle any future variants
                     _ => boxed_params
-                        .push(Box::new(Option::<String>::None) as Box<dyn rusqlite::ToSql>),
+                        .push(Box::new(Option::<String>::None) as Box<dyn crate::rq::ToSql>),
                 }
             }
         }
@@ -715,14 +716,14 @@ pub trait WithoutIdTableInfo {
 /// of references with static lifetimes, solving borrowing issues
 pub struct StaticParamsHolder {
     // We store Box<dyn ToSql> to allow for heterogeneous parameter types
-    params: Vec<Box<dyn rusqlite::ToSql>>,
+    params: Vec<Box<dyn crate::rq::ToSql>>,
     // A cache of static references to the boxed parameters
-    static_refs: Vec<&'static dyn rusqlite::ToSql>,
+    static_refs: Vec<&'static dyn crate::rq::ToSql>,
 }
 
 impl StaticParamsHolder {
     /// Creates a new instance with the given parameters
-    pub fn new(params: Vec<Box<dyn rusqlite::ToSql>>) -> Self {
+    pub fn new(params: Vec<Box<dyn crate::rq::ToSql>>) -> Self {
         let mut holder = Self {
             params,
             static_refs: Vec::new(),
@@ -743,7 +744,7 @@ impl StaticParamsHolder {
             // Safety: We're extending the lifetime of the reference to 'static,
             // which is safe as long as StaticParamsHolder lives as long as the references
             let static_param = unsafe {
-                std::mem::transmute::<&dyn rusqlite::ToSql, &'static dyn rusqlite::ToSql>(
+                std::mem::transmute::<&dyn crate::rq::ToSql, &'static dyn crate::rq::ToSql>(
                     param.as_ref(),
                 )
             };
@@ -752,23 +753,23 @@ impl StaticParamsHolder {
     }
 
     /// Returns a slice of static references to the SQL parameters
-    pub fn as_slice(&self) -> &[&'static dyn rusqlite::ToSql] {
+    pub fn as_slice(&self) -> &[&'static dyn crate::rq::ToSql] {
         &self.static_refs
     }
 
     /// Returns a reference to the boxed parameters
-    pub fn params(&self) -> &Vec<Box<dyn rusqlite::ToSql>> {
+    pub fn params(&self) -> &Vec<Box<dyn crate::rq::ToSql>> {
         &self.params
     }
 }
 
 // 修正 AsRef trait 的实现，保持正确的生命周期关系
-impl<'a> AsRef<[&'a dyn rusqlite::ToSql]> for StaticParamsHolder {
-    fn as_ref(&self) -> &[&'a dyn rusqlite::ToSql] {
+impl<'a> AsRef<[&'a dyn crate::rq::ToSql]> for StaticParamsHolder {
+    fn as_ref(&self) -> &[&'a dyn crate::rq::ToSql] {
         // 我们需要转换生命周期，因为参数持有 'static 生命周期的引用，
         // 但我们需要返回具有调用者请求的 'a 生命周期的引用
         unsafe {
-            std::mem::transmute::<&[&'static dyn rusqlite::ToSql], &[&'a dyn rusqlite::ToSql]>(
+            std::mem::transmute::<&[&'static dyn crate::rq::ToSql], &[&'a dyn crate::rq::ToSql]>(
                 &self.static_refs,
             )
         }
@@ -778,7 +779,7 @@ impl<'a> AsRef<[&'a dyn rusqlite::ToSql]> for StaticParamsHolder {
 // 实现 Deref trait，使得 StaticParamsHolder 可以直接解引用为 [&dyn ToSql]
 // 这使得它可以直接被用在期望 &[&dyn ToSql] 的上下文中
 impl std::ops::Deref for StaticParamsHolder {
-    type Target = [&'static dyn rusqlite::ToSql];
+    type Target = [&'static dyn crate::rq::ToSql];
 
     fn deref(&self) -> &Self::Target {
         &self.static_refs
@@ -789,52 +790,52 @@ impl std::ops::Deref for StaticParamsHolder {
 
 /// Extension trait for StaticParamsHolder to extract params as Vec
 pub trait StaticParamsExt {
-    fn to_boxed_vec(&self) -> Vec<Box<dyn rusqlite::ToSql>>;
+    fn to_boxed_vec(&self) -> Vec<Box<dyn crate::rq::ToSql>>;
 }
 
 impl StaticParamsExt for StaticParamsHolder {
-    fn to_boxed_vec(&self) -> Vec<Box<dyn rusqlite::ToSql>> {
+    fn to_boxed_vec(&self) -> Vec<Box<dyn crate::rq::ToSql>> {
         // Convert each parameter based on its SQL representation
         let mut result = Vec::with_capacity(self.params.len());
 
         for param in &self.params {
             // Get the SQL representation and create a new boxed value
             match param.to_sql().unwrap_or_else(|_| {
-                rusqlite::types::ToSqlOutput::from(&rusqlite::types::Value::Null)
+                crate::rq::types::ToSqlOutput::from(&crate::rq::types::Value::Null)
             }) {
-                rusqlite::types::ToSqlOutput::Borrowed(rusqlite::types::ValueRef::Integer(i)) => {
-                    result.push(Box::new(i) as Box<dyn rusqlite::ToSql>)
+                crate::rq::types::ToSqlOutput::Borrowed(crate::rq::types::ValueRef::Integer(i)) => {
+                    result.push(Box::new(i) as Box<dyn crate::rq::ToSql>)
                 }
-                rusqlite::types::ToSqlOutput::Borrowed(rusqlite::types::ValueRef::Real(r)) => {
-                    result.push(Box::new(r) as Box<dyn rusqlite::ToSql>)
+                crate::rq::types::ToSqlOutput::Borrowed(crate::rq::types::ValueRef::Real(r)) => {
+                    result.push(Box::new(r) as Box<dyn crate::rq::ToSql>)
                 }
-                rusqlite::types::ToSqlOutput::Borrowed(rusqlite::types::ValueRef::Text(t)) => {
+                crate::rq::types::ToSqlOutput::Borrowed(crate::rq::types::ValueRef::Text(t)) => {
                     result.push(Box::new(String::from_utf8_lossy(t).into_owned())
-                        as Box<dyn rusqlite::ToSql>)
+                        as Box<dyn crate::rq::ToSql>)
                 }
-                rusqlite::types::ToSqlOutput::Borrowed(rusqlite::types::ValueRef::Blob(b)) => {
-                    result.push(Box::new(b.to_vec()) as Box<dyn rusqlite::ToSql>)
+                crate::rq::types::ToSqlOutput::Borrowed(crate::rq::types::ValueRef::Blob(b)) => {
+                    result.push(Box::new(b.to_vec()) as Box<dyn crate::rq::ToSql>)
                 }
-                rusqlite::types::ToSqlOutput::Borrowed(rusqlite::types::ValueRef::Null) => {
-                    result.push(Box::new(Option::<String>::None) as Box<dyn rusqlite::ToSql>)
+                crate::rq::types::ToSqlOutput::Borrowed(crate::rq::types::ValueRef::Null) => {
+                    result.push(Box::new(Option::<String>::None) as Box<dyn crate::rq::ToSql>)
                 }
-                rusqlite::types::ToSqlOutput::Owned(rusqlite::types::Value::Integer(i)) => {
-                    result.push(Box::new(i) as Box<dyn rusqlite::ToSql>)
+                crate::rq::types::ToSqlOutput::Owned(crate::rq::types::Value::Integer(i)) => {
+                    result.push(Box::new(i) as Box<dyn crate::rq::ToSql>)
                 }
-                rusqlite::types::ToSqlOutput::Owned(rusqlite::types::Value::Real(r)) => {
-                    result.push(Box::new(r) as Box<dyn rusqlite::ToSql>)
+                crate::rq::types::ToSqlOutput::Owned(crate::rq::types::Value::Real(r)) => {
+                    result.push(Box::new(r) as Box<dyn crate::rq::ToSql>)
                 }
-                rusqlite::types::ToSqlOutput::Owned(rusqlite::types::Value::Text(t)) => {
-                    result.push(Box::new(t) as Box<dyn rusqlite::ToSql>)
+                crate::rq::types::ToSqlOutput::Owned(crate::rq::types::Value::Text(t)) => {
+                    result.push(Box::new(t) as Box<dyn crate::rq::ToSql>)
                 }
-                rusqlite::types::ToSqlOutput::Owned(rusqlite::types::Value::Blob(b)) => {
-                    result.push(Box::new(b) as Box<dyn rusqlite::ToSql>)
+                crate::rq::types::ToSqlOutput::Owned(crate::rq::types::Value::Blob(b)) => {
+                    result.push(Box::new(b) as Box<dyn crate::rq::ToSql>)
                 }
-                rusqlite::types::ToSqlOutput::Owned(rusqlite::types::Value::Null) => {
-                    result.push(Box::new(Option::<String>::None) as Box<dyn rusqlite::ToSql>)
+                crate::rq::types::ToSqlOutput::Owned(crate::rq::types::Value::Null) => {
+                    result.push(Box::new(Option::<String>::None) as Box<dyn crate::rq::ToSql>)
                 }
                 // Handle any other case
-                _ => result.push(Box::new(Option::<String>::None) as Box<dyn rusqlite::ToSql>),
+                _ => result.push(Box::new(Option::<String>::None) as Box<dyn crate::rq::ToSql>),
             }
         }
 
@@ -843,13 +844,13 @@ impl StaticParamsExt for StaticParamsHolder {
 }
 
 /// Extension trait for StaticParamsHolder params
-pub trait ToSqlClone: rusqlite::ToSql {
-    fn clone_box(&self) -> Box<dyn rusqlite::ToSql>;
+pub trait ToSqlClone: crate::rq::ToSql {
+    fn clone_box(&self) -> Box<dyn crate::rq::ToSql>;
 }
 
 // Implement for common types
-impl<T: rusqlite::ToSql + Clone + 'static> ToSqlClone for T {
-    fn clone_box(&self) -> Box<dyn rusqlite::ToSql> {
+impl<T: crate::rq::ToSql + Clone + 'static> ToSqlClone for T {
+    fn clone_box(&self) -> Box<dyn crate::rq::ToSql> {
         Box::new(self.clone())
     }
 }
@@ -1112,9 +1113,9 @@ macro_rules! define_db {
                     // Attempt rollback, ignore error if rollback fails
                     let _ = self.conn.execute("ROLLBACK", []);
                     // Return a specific SqlitedError variant if possible, or a generic one
-                    return Err($crate::error::SqlitedError::Rusqlite(rusqlite::Error::SqliteFailure(
-                        rusqlite::ffi::Error {
-                            code: rusqlite::ffi::ErrorCode::InternalMalfunction, // Or a more specific code
+                    return Err($crate::error::SqlitedError::Rusqlite($crate::rq::Error::SqliteFailure(
+                        $crate::rq::ffi::Error {
+                            code: $crate::rq::ffi::ErrorCode::InternalMalfunction, // Or a more specific code
                             extended_code: 1
                         },
                         Some("Failed to apply migrations".to_string())
@@ -1167,9 +1168,9 @@ macro_rules! define_db {
                             // Ensure directory creation maps error correctly
                             if let Some(parent) = path_buf.parent() {
                                 std::fs::create_dir_all(parent)
-                                    .map_err(|e| $crate::error::SqlitedError::Rusqlite(rusqlite::Error::SqliteFailure(
-                                        rusqlite::ffi::Error {
-                                            code: rusqlite::ffi::ErrorCode::CannotOpen,
+                                    .map_err(|e| $crate::error::SqlitedError::Rusqlite($crate::rq::Error::SqliteFailure(
+                                        $crate::rq::ffi::Error {
+                                            code: $crate::rq::ffi::ErrorCode::CannotOpen,
                                             extended_code: 1
                                         },
                                         Some(format!("Failed to create database directory: {}", e))
@@ -1188,8 +1189,8 @@ macro_rules! define_db {
                                 let pool = $crate::pool::ConnectionPool::new(&canonical_path)
                                     .map(std::sync::Arc::new)
                                     // Map PoolError to SqlitedError if needed, or define From<PoolError> for SqlitedError
-                                    .map_err(|pool_err| $crate::error::SqlitedError::Rusqlite(rusqlite::Error::SqliteFailure(
-                                        rusqlite::ffi::Error{code: rusqlite::ffi::ErrorCode::InternalMalfunction, extended_code:1},
+                                    .map_err(|pool_err| $crate::error::SqlitedError::Rusqlite($crate::rq::Error::SqliteFailure(
+                                        $crate::rq::ffi::Error{code: $crate::rq::ffi::ErrorCode::InternalMalfunction, extended_code:1},
                                         Some(format!("Pool creation error: {}", pool_err)) // Example mapping
                                     )))?;
                                 pools.insert(canonical_path, pool.clone());
@@ -1207,8 +1208,8 @@ macro_rules! define_db {
                         // new_memory_pool returns Result<_, PoolError>, map it
                         let pool = $crate::pool::ConnectionPool::new_memory()
                              .map(std::sync::Arc::new)
-                             .map_err(|pool_err| $crate::error::SqlitedError::Rusqlite(rusqlite::Error::SqliteFailure(
-                                 rusqlite::ffi::Error{code: rusqlite::ffi::ErrorCode::InternalMalfunction, extended_code:1},
+                             .map_err(|pool_err| $crate::error::SqlitedError::Rusqlite($crate::rq::Error::SqliteFailure(
+                                 $crate::rq::ffi::Error{code: $crate::rq::ffi::ErrorCode::InternalMalfunction, extended_code:1},
                                  Some(format!("Memory pool error: {}", pool_err))
                              )))?;
                         let conn = $crate::connection::get_connection(&pool)?;
@@ -1430,9 +1431,9 @@ macro_rules! define_db {
                 } else {
                     // 回滚所有变更
                     self.conn.execute("ROLLBACK", [])?;
-                    return Err(rusqlite::Error::SqliteFailure(
-                        rusqlite::ffi::Error {
-                            code: rusqlite::ffi::ErrorCode::InternalMalfunction,
+                    return Err($crate::rq::Error::SqliteFailure(
+                        $crate::rq::ffi::Error {
+                            code: $crate::rq::ffi::ErrorCode::InternalMalfunction,
                             extended_code: 1
                         },
                         Some("Failed to apply migrations".to_string())

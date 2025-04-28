@@ -11,6 +11,8 @@ pub use r2d2_sqlite;
 pub use rusqlite;
 pub use sqlited_macros::{table, sql, sql_params, sql_str, autoincrement, primary_key, unique, check, not_null, default, foreign_key, index, unique_index, constraint, migration};
 
+pub extern crate rusqlite as rq;
+
 // Export our public modules
 pub mod connection;
 pub mod macros;
