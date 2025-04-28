@@ -206,15 +206,28 @@ pub fn sql_as(attr: TokenStream, input: TokenStream) -> TokenStream {
             };
 
             // 生成扩展代码
-            let expanded = quote! {
-              #(#struct_attrs)*
-              #[derive(Default, Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-              #vis #struct_def
+            let expanded = if is_newtype {
+                // 对于新类型，添加 #[repr(transparent)]
+                quote! {
+                    #(#struct_attrs)*
+                    #[derive(Default, Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+                    #[repr(transparent)]  // 为新类型添加 repr(transparent) 属性
+                    #vis #struct_def
 
-              // 如果是新类型，添加 Deref 和 DerefMut 实现
-              #deref_impl
+                    // 如果是新类型，添加 Deref 和 DerefMut 实现
+                    #deref_impl
 
-              sqlited::sqld!(#style #type_name);
+                    sqlited::sqld!(#style #type_name);
+                }
+            } else {
+                // 对于非新类型，使用标准实现
+                quote! {
+                    #(#struct_attrs)*
+                    #[derive(Default, Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+                    #vis #struct_def
+
+                    sqlited::sqld!(#style #type_name);
+                }
             };
 
             expanded.into()
