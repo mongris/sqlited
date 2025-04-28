@@ -220,7 +220,7 @@ macro_rules! sqld {
     ) => {
         impl $crate::SqliteBindableValue for $type {
             fn to_sql_value(&self) -> $crate::rq::Result<$crate::rq::types::ToSqlOutput<'_>> {
-                match bincode::serialize(&self) {
+                match $crate::bincode::serialize(&self) {
                     Ok(bytes) => Ok($crate::rq::types::ToSqlOutput::from(bytes)),
                     Err(err) => Err($crate::rq::Error::ToSqlConversionFailure(
                         Box::new(err)
@@ -231,7 +231,7 @@ macro_rules! sqld {
             fn from_sql_value(value: $crate::rq::types::ValueRef<'_>) -> Result<Self, $crate::rq::types::FromSqlError> {
                 use $crate::rq::types::FromSql;
                 Vec::<u8>::column_result(value).and_then(|bytes| {
-                    match bincode::deserialize::<$type>(&bytes) {
+                    match $crate::bincode::deserialize::<$type>(&bytes) {
                         Ok(obj) => Ok(obj),
                         Err(err) => Err($crate::rq::types::FromSqlError::Other(
                             Box::new(err)
