@@ -2,6 +2,7 @@
 mod tests {
     use std::collections::HashMap;
 
+    use serde::{Deserialize, Serialize};
     use sqlited::{
         prelude::*, sql, sql_as, table
     };
@@ -15,8 +16,8 @@ mod tests {
     }
 
     // 定义复杂结构体，用于二进制序列化
-    #[sql_as(binary)]
-    pub struct Layout {
+    #[derive(Default, Serialize, Deserialize, Clone, Debug, PartialEq)]
+    pub struct OriginalLayout {
         pub x: i32,
         pub y: i32,
         pub width: Option<i32>,
@@ -24,6 +25,9 @@ mod tests {
         pub fullscreen: bool,
         pub axis: Axis,
     }
+
+    #[sql_as(binary)]
+    pub struct Layout(pub OriginalLayout);
 
     // 定义复杂结构体，用于 JSON 序列化
     #[sql_as(json)]
@@ -97,14 +101,16 @@ mod tests {
         // 创建测试数据
         let axis = Axis::Vertical;
         
-        let layout = Layout {
-            x: 100,
+        let mut layout = Layout(OriginalLayout {
+            x: 1,
             y: 200,
             width: Some(800),
             height: Some(600),
             fullscreen: true,
             axis: Axis::Horizontal,
-        };
+        });
+
+        layout.x = 100;
         
         let mut settings = HashMap::new();
         settings.insert("theme".to_string(), "dark".to_string());
