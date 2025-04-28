@@ -108,6 +108,76 @@ impl SqliteTypeName for i32 {
     }
 }
 
+// 为 Vec<u8> (已实现) 和一些常见的字节类型实现 SqliteTypeName
+impl SqliteTypeName for Vec<u8> {
+    fn sql_type_name() -> &'static str {
+        "BLOB"
+    }
+}
+
+// 为 u64 实现 SqliteTypeName
+impl SqliteTypeName for u64 {
+    fn sql_type_name() -> &'static str {
+        "INTEGER"
+    }
+    
+    fn is_integer_type() -> bool {
+        true
+    }
+}
+
+// 为其他常见无符号整数类型实现
+impl SqliteTypeName for u8 {
+    fn sql_type_name() -> &'static str {
+        "INTEGER"
+    }
+    
+    fn is_integer_type() -> bool {
+        true
+    }
+}
+
+impl SqliteTypeName for u16 {
+    fn sql_type_name() -> &'static str {
+        "INTEGER"
+    }
+    
+    fn is_integer_type() -> bool {
+        true
+    }
+}
+
+impl SqliteTypeName for u32 {
+    fn sql_type_name() -> &'static str {
+        "INTEGER"
+    }
+    
+    fn is_integer_type() -> bool {
+        true
+    }
+}
+
+// 为其他常见有符号整数类型实现
+impl SqliteTypeName for i8 {
+    fn sql_type_name() -> &'static str {
+        "INTEGER"
+    }
+    
+    fn is_integer_type() -> bool {
+        true
+    }
+}
+
+impl SqliteTypeName for i16 {
+    fn sql_type_name() -> &'static str {
+        "INTEGER"
+    }
+    
+    fn is_integer_type() -> bool {
+        true
+    }
+}
+
 impl SqliteTypeName for i64 {
     fn sql_type_name() -> &'static str {
         "INTEGER"
@@ -146,12 +216,6 @@ where
 
     fn is_integer_type() -> bool {
         T::is_integer_type()
-    }
-}
-
-impl SqliteTypeName for Vec<u8> {
-    fn sql_type_name() -> &'static str {
-        "BLOB"
     }
 }
 
