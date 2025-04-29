@@ -8,6 +8,7 @@ mod sql_as_impl;
 mod sql_no_quote_impl;
 mod sql_params_impl;
 mod table_impl;
+mod query_impl;
 mod utils;
 
 #[proc_macro]
@@ -404,4 +405,9 @@ pub fn sql_as(args: TokenStream, input: TokenStream) -> TokenStream {
 #[proc_macro_attribute]
 pub fn sql_as_value(_args: TokenStream, item: TokenStream) -> TokenStream {
     item
+}
+
+#[proc_macro]
+pub fn query(input: TokenStream) -> TokenStream {
+    query_impl::query_macro(input)
 }
