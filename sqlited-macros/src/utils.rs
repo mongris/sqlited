@@ -45,3 +45,27 @@ fn levenshtein_distance(a: &str, b: &str) -> usize {
   
   matrix[a_len][b_len]
 }
+
+
+/// 获取蛇形命名法
+pub(crate) fn convert_to_snake_name(struct_name: &str) -> String {
+    let struct_name_str = struct_name.to_string();
+
+    // 将驼峰命名转换为蛇形命名
+    let mut result = String::new();
+    let chars: Vec<char> = struct_name_str.chars().collect();
+
+    for (i, &c) in chars.iter().enumerate() {
+        if c.is_uppercase() {
+            // 不是首字母且是大写，添加下划线
+            if i > 0 {
+                result.push('_');
+            }
+            result.push(c.to_lowercase().next().unwrap());
+        } else {
+            result.push(c);
+        }
+    }
+
+    result.to_lowercase()
+}

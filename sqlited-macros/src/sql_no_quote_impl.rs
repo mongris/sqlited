@@ -3,7 +3,7 @@ use proc_macro2::{TokenStream as TokenStream2, Span};
 use quote::quote;
 use syn::LitStr;
 
-use crate::sql_check_impl;
+use crate::{sql_check_impl, utils::convert_to_snake_name};
 
 
 struct ParenthesesState {
@@ -149,10 +149,41 @@ pub(crate) fn parse_sql_no_quotes(input: TokenStream) -> (String, Option<TokenSt
     (sql, params, span)
 }
 
+// 将驼峰命名的表名转换为蛇形命名
+fn transform_table_names(sql: &str) -> String {
+    // 常见的 SQL 关键词后面通常跟表名
+    let keywords = ["FROM", "JOIN", "UPDATE", "INTO"];
+    
+    let mut transformed = sql.to_string();
+    let words: Vec<&str> = sql.split_whitespace().collect();
+    
+    // 遍历单词，查找关键词后面的可能表名
+    for i in 0..words.len().saturating_sub(1) {
+        let word = words[i];
+        if keywords.contains(&word.to_uppercase().as_str()) {
+            let potential_table = words[i + 1];
+            
+            // 检查是否是驼峰命名（首字母大写）
+            if !potential_table.is_empty() && potential_table.chars().next().unwrap().is_uppercase() {
+                // 使用项目已有的转换函数
+                let snake_name = convert_to_snake_name(potential_table);
+                
+                // 替换原始表名，注意保留原始的大小写风格
+                transformed = transformed.replace(potential_table, &snake_name);
+            }
+        }
+    }
+    
+    transformed
+}
+
 // 处理SQL语句，验证并格式化每个语句
 pub(crate) fn process_sql(sql: &str, span: Span) -> std::result::Result<String, TokenStream> {
+    // 首先转换表名
+    let sql_with_transformed_tables = transform_table_names(sql);
+
     // 按分号分割SQL语句
-    let statements: Vec<&str> = sql.split(';')
+    let statements: Vec<&str> = sql_with_transformed_tables.split(';')
         .map(|s| s.trim())
         .filter(|s| !s.is_empty())
         .collect();

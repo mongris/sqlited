@@ -69,21 +69,22 @@ mod tests {
     impl TestDb {
         query! {
             fn get_user_by_name(name: String) -> Result<User> {
-                SELECT * FROM user WHERE name = ?
+                SELECT * FROM User WHERE name = ?
             }
         }
 
         query! {
             fn get_user_by_id(id: i32) -> anyhow::Result<User> {
-                SELECT * FROM user WHERE id = ?
+                SELECT * FROM User WHERE id = ?
             }
         }
 
         query! {
-            fn get_users_by_age(age2: i32) -> Result<Vec<User>> {
-                SELECT * FROM user WHERE age > ?1
+            fn get_users_by_age(age: i32) -> Result<Vec<User>> {
+                SELECT * FROM User WHERE age > ?1
             }
         }
+        
 
         pub fn get_user_by_name2(&self, name: String) -> sqlited::Result<User> {
             let params = sql_params!(<User> {
@@ -99,6 +100,17 @@ mod tests {
         pub fn get_user_by_age2(&self, age2: i32) -> sqlited::Result<User> {
             let query = sql_str!(SELECT * FROM user WHERE age > ?);
             self.query_row(query, params![age2], User::from_row)
+        }
+
+        query! {
+            fn get_published_posts_by_user(user_id: i32) -> Result<Vec<TestPost>> {
+                SELECT * FROM TestPost WHERE user_id = ? AND published = 1
+            }
+        }
+
+        pub fn get_published_posts_by_user2(&self, user_id: i32) -> sqlited::Result<Vec<TestPost>> {
+            let query = sql_str!(SELECT * FROM test_post WHERE user_id = ? AND published = 1);
+            self.query(query, params![user_id], TestPost::from_row)
         }
     }
 
@@ -277,15 +289,25 @@ mod tests {
             params![&true, &user_id],
             |row| Ok((row.get::<_, i32>(0)?, row.get::<_, String>(1)?, row.get::<_, u64>(2)?))
         ).unwrap();
-        
+
         // 验证有两篇已发布的帖子
         assert_eq!(published_posts.len(), 2);
         assert_eq!(published_posts[0].1, "First Post");
         assert_eq!(published_posts[1].1, "Tech Review");
         assert_eq!(published_posts[0].2, 9223372036854775807u64);
         
+
+        let published_posts = db.get_published_posts_by_user(user_id).unwrap();
+        
+        // 验证有两篇已发布的帖子
+        assert_eq!(published_posts.len(), 2);
+        assert_eq!(published_posts[0].title, "First Post");
+        assert_eq!(published_posts[1].title, "Tech Review");
+        assert_eq!(published_posts[0].long_u64, 9223372036854775807u64);
+        
+        
         // 查询单个帖子并更新
-        let first_post_id = published_posts[0].0;
+        let first_post_id = published_posts[0].id;
         
         // 更新帖子标题
         db.execute(

@@ -7,7 +7,7 @@ use syn::spanned::Spanned;
 use syn::token::Comma;
 use syn::{Attribute, Data, DeriveInput, Fields, LitStr, Meta, Token, parse_macro_input};
 
-use crate::utils::find_closest_match;
+use crate::utils::{convert_to_snake_name, find_closest_match};
 
 /// 表级属性
 struct TableAttribute {
@@ -427,7 +427,7 @@ fn generate_table_impl(
 
 /// 生成表名实现代码
 fn generate_table_name(struct_name: &syn::Ident) -> TokenStream2 {
-    let snake_case_name = get_table_name(struct_name);
+    let snake_case_name = convert_to_snake_name(&struct_name.to_string());
 
     quote! {
         fn table_name() -> &'static str {
@@ -508,7 +508,7 @@ fn generate_migration_impls(
     table_attrs: &[TableAttribute],
     field_attrs: &[FieldAttribute],
 ) -> TokenStream2 {
-    let table_name = get_table_name(struct_name);
+    let table_name = convert_to_snake_name(&struct_name.to_string());
     let migration_methods =
         generate_migration_methods(table_name.as_str(), table_attrs, field_attrs);
 
@@ -1061,29 +1061,6 @@ fn get_sql_type(ty: &syn::Type) -> String {
         // 也可以考虑在这里添加更多的自定义类型映射
         "TEXT".to_string()
     }
-}
-
-/// 获取表名（蛇形命名法）
-fn get_table_name(struct_name: &syn::Ident) -> String {
-    let struct_name_str = struct_name.to_string();
-
-    // 将驼峰命名转换为蛇形命名
-    let mut result = String::new();
-    let chars: Vec<char> = struct_name_str.chars().collect();
-
-    for (i, &c) in chars.iter().enumerate() {
-        if c.is_uppercase() {
-            // 不是首字母且是大写，添加下划线
-            if i > 0 {
-                result.push('_');
-            }
-            result.push(c.to_lowercase().next().unwrap());
-        } else {
-            result.push(c);
-        }
-    }
-
-    result.to_lowercase()
 }
 
 fn generate_create_table_sql(
