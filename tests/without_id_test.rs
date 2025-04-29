@@ -78,6 +78,12 @@ mod tests {
             }
         }
 
+        query! {
+            fn get_users_by_age(age: i32) -> Result<Vec<User>> {
+                SELECT * FROM user WHERE age > ?
+            }
+        }
+
         pub fn get_user_by_name2(&self, name: String) -> sqlited::Result<User> {
             let params = sql_params!(<User> {
                 name: name,
@@ -87,6 +93,17 @@ mod tests {
                 &params
             );
             query.query_row(self.raw_connection(), User::from_row)
+        }
+
+        pub fn get_user_by_age2(&self, age: i32) -> sqlited::Result<Vec<User>> {
+            let params = sql_params!(<User> {
+                age,
+            });
+            let query = sql!(
+                SELECT * FROM user WHERE age > ?,
+                &params
+            );
+            query.query_map(self.raw_connection(), User::from_row)
         }
     }
 
@@ -333,6 +350,11 @@ mod tests {
             )?;
             
             assert_eq!(count, 2);
+
+
+            let users = &db.get_users_by_age(2).unwrap();
+
+            assert_eq!(users.len(), 2);
             
             // 故意返回错误以回滚事务
             Err::<(), _>(sqlited::SqlitedError::from(rusqlite::Error::StatementChangedRows(0)))

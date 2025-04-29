@@ -1,25 +1,26 @@
 use proc_macro::TokenStream;
-use proc_macro2::{TokenStream as TokenStream2, Span};
-use quote::{quote, ToTokens};
+use proc_macro2::{Span, TokenStream as TokenStream2};
+use quote::{ToTokens, quote};
 use syn::{
+    Block, FnArg, GenericArgument, Ident, Result as SynResult, ReturnType, Token, Type, Visibility,
+    braced,
     parse::{Parse, ParseStream},
-    parse_macro_input, 
-    Token, Visibility, Ident, FnArg, ReturnType, Type, Block, braced, 
+    parse_macro_input,
     punctuated::Punctuated,
     token::Comma,
-    Result as SynResult
 };
 
-// 查询宏输入的解析结构
+// Query macro input parse structure
 struct QueryInput {
-    visibility: Visibility,      // 函数可见性 (pub, pub(crate) 等)
-    fn_token: Token![fn],        // 'fn' 标记
-    name: Ident,                 // 函数名
+    visibility: Visibility,
+    fn_token: Token![fn],
+    name: Ident,
     paren_token: syn::token::Paren,
-    args: Punctuated<FnArg, Comma>, // 函数参数
-    return_type: ReturnType,     // 返回类型
+    args: Punctuated<FnArg, Comma>,
+    return_type: ReturnType,
     brace_token: syn::token::Brace,
-    query: TokenStream2,               // SQL 查询语句
+
+    query: TokenStream2,
 }
 
 impl Parse for QueryInput {
@@ -27,23 +28,23 @@ impl Parse for QueryInput {
         let visibility = input.parse()?;
         let fn_token = input.parse()?;
         let name = input.parse()?;
-        
-        // 解析参数列表
+
+        // Parse parameter list
         let content;
         let paren_token = syn::parenthesized!(content in input);
         let args = Punctuated::parse_terminated(&content)?;
-        
-        // 解析返回类型
+
+        // Parse return type
         let return_type = input.parse()?;
-        
-        // 解析查询体
+
+        // Parse query body
         let body;
         let brace_token = syn::braced!(body in input);
-        
-        // 收集SQL查询字符串
+
+        // Collect SQL query string
         let query_tokens: TokenStream2 = body.parse()?;
         let query = query_tokens;
-        
+
         Ok(QueryInput {
             visibility,
             fn_token,
@@ -57,89 +58,166 @@ impl Parse for QueryInput {
     }
 }
 
-/// 实现 query! 宏处理函数
+/// Implement query! macro processor
 pub fn query_macro(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as QueryInput);
-    
-    // 提取函数的各个部分
+
+    // Extract function parts
     let visibility = &input.visibility;
     let fn_name = &input.name;
     let args = &input.args;
     let query_str = &input.query;
-    
-    // 从返回类型提取模型类型
-    let return_model_type = extract_return_model_type(&input.return_type);
-    
-    // 构建参数列表，用于方法签名
+
+    // Determine if we're returning a collection
+    let (model_type, is_vec) = extract_model_type_and_collection(&input.return_type);
+
+    // Build method params
     let method_params = generate_method_params(args);
-    
-    // 构建参数名列表，用于 sql_params! 宏
-    let param_names = args.iter()
-        .filter_map(|arg| {
-            if let FnArg::Typed(pat_type) = arg {
-                if let syn::Pat::Ident(pat_ident) = &*pat_type.pat {
-                    return Some(pat_ident.ident.clone());
-                }
+
+    // Build param names for sql_params! macro
+    let param_names = args.iter().filter_map(|arg| {
+        if let FnArg::Typed(pat_type) = arg {
+            if let syn::Pat::Ident(pat_ident) = &*pat_type.pat {
+                return Some(pat_ident.ident.clone());
             }
-            None
-        });
-    
-    // 生成结果代码
-    let result = quote! {
-        #visibility fn #fn_name(#method_params) -> sqlited::Result<#return_model_type> {
-            let params = sqlited::sql_params!(<#return_model_type> {
-                #(#param_names,)*
-            });
-            
-            let query = sqlited::sql!(
-                #query_str,
-                &params
-            );
-            
-            query.query_row(self.raw_connection(), #return_model_type::from_row)
         }
-    };
-    
-    result.into()
+        None
+    });
+
+    // Generate code based on whether returning a single item or a collection
+    if is_vec {
+        // Multiple results
+        quote! {
+            #visibility fn #fn_name(#method_params) -> sqlited::Result<Vec<#model_type>> {
+                let params = sqlited::sql_params!(<#model_type> {
+                    #(#param_names: #param_names,)*
+                });
+
+                let query = sqlited::sql!(
+                    #query_str,
+                    &params
+                );
+
+                query.query_map(self.raw_connection(), #model_type::from_row)
+            }
+        }
+        .into()
+    } else {
+        // Single result
+        quote! {
+            #visibility fn #fn_name(#method_params) -> sqlited::Result<#model_type> {
+                let params = sqlited::sql_params!(<#model_type> {
+                    #(#param_names: #param_names,)*
+                });
+
+                let query = sqlited::sql!(
+                    #query_str,
+                    &params
+                );
+
+                query.query_row(self.raw_connection(), #model_type::from_row)
+            }
+        }
+        .into()
+    }
 }
 
-// 从返回类型中提取模型类型
-fn extract_return_model_type(return_type: &ReturnType) -> TokenStream2 {
+// Extract model type and whether it's a Vec or single item
+fn extract_model_type_and_collection(return_type: &ReturnType) -> (TokenStream2, bool) {
     match return_type {
         ReturnType::Type(_, ty) => {
             match &**ty {
                 Type::Path(type_path) => {
-                    // 检查返回类型是否是 Result<ModelType>
+                    // Check if return type is Result<T> or similar
                     if let Some(segment) = type_path.path.segments.last() {
-                        if segment.ident == "Result" || segment.ident == "anyhow::Result" || segment.ident == "sqlited::Result" {
+                        if segment.ident == "Result"
+                            || segment.ident == "anyhow::Result"
+                            || segment.ident == "sqlited::Result"
+                        {
                             if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
                                 if let Some(arg) = args.args.first() {
-                                    return arg.to_token_stream();
+                                    let type_str = quote!(#arg).to_string();
+
+                                    // Check if it's a Vec<T>
+                                    if type_str.starts_with("Vec < ")
+                                        || type_str.starts_with("Vec<")
+                                    {
+                                        // Extract inner type from Vec<T>
+                                        match arg {
+                                            GenericArgument::Type(generic_type) => {
+                                                if let Type::Path(inner_path) = generic_type {
+                                                    if let Some(vec_segment) =
+                                                        inner_path.path.segments.first()
+                                                    {
+                                                        if vec_segment.ident == "Vec" {
+                                                            if let syn::PathArguments::AngleBracketed(inner_args) = &vec_segment.arguments {
+                                                              if let Some(model_type) = inner_args.args.first() {
+                                                                  return (model_type.to_token_stream(), true);
+                                                              }
+                                                          }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            _ => {}
+                                        }
+
+                                        // Try parsing more directly
+                                        let s = type_str.trim();
+                                        let idx_start = s.find('<').unwrap_or(0) + 1;
+                                        let idx_end = s.rfind('>').unwrap_or(s.len());
+                                        let inner_type = &s[idx_start..idx_end].trim();
+
+                                        let inner_type_stream: TokenStream2 = inner_type
+                                            .parse()
+                                            .unwrap_or_else(|_| quote!(UnknownType));
+
+                                        return (inner_type_stream, true);
+                                    }
+
+                                    // Single item
+                                    return (arg.to_token_stream(), false);
                                 }
                             }
-                        } else {
-                            // 直接返回类型
-                            return type_path.to_token_stream();
                         }
                     }
-                },
+
+                    // Direct return type (no Result wrapper)
+                    let type_str = quote!(#type_path).to_string();
+                    let is_vec = type_str.starts_with("Vec < ") || type_str.starts_with("Vec<");
+
+                    if is_vec {
+                        // Try to extract inner type
+                        let s = type_str.trim();
+                        let idx_start = s.find('<').unwrap_or(0) + 1;
+                        let idx_end = s.rfind('>').unwrap_or(s.len());
+                        let inner_type = &s[idx_start..idx_end].trim();
+
+                        let inner_type_stream: TokenStream2 =
+                            inner_type.parse().unwrap_or_else(|_| quote!(UnknownType));
+
+                        return (inner_type_stream, true);
+                    }
+
+                    return (type_path.to_token_stream(), false);
+                }
                 _ => {}
             }
-            
-            // 如果无法解析，返回默认的 TokenStream
-            quote! { () }
-        },
-        _ => quote! { () }
+
+            // Default if we can't parse it
+            (quote! { UnknownType }, false)
+        }
+        _ => (quote! { UnknownType }, false),
     }
 }
 
-// 生成方法参数列表
+// Generate method parameters
 fn generate_method_params(args: &Punctuated<FnArg, Comma>) -> TokenStream2 {
     let mut method_params = quote! { &self };
-    
+
     if !args.is_empty() {
         method_params = quote! { &self, #args };
     }
-    
+
     method_params
 }
