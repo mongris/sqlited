@@ -365,6 +365,9 @@ fn generate_table_impl(
     // 生成创建表 SQL 方法
     let create_table_sql_impl = generate_create_table_sql(struct_name, fields, table_attrs, field_attrs);
 
+    // 生成 from_row 方法
+    let from_row_impl = generate_from_row_method(struct_name, fields);
+
     let field_defs = fields.iter().map(|f| {
         let name = &f.ident;
         let ty = &f.ty;
@@ -393,6 +396,10 @@ fn generate_table_impl(
                     #(#field_defaults),*
                 }
             }
+        }
+
+        impl #struct_name {
+            #from_row_impl
         }
         
         impl sqlited::WithoutIdTableInfo for #struct_name {
@@ -452,6 +459,27 @@ fn generate_field_types(fields: &Punctuated<syn::Field, Comma>) -> TokenStream2 
           ]
       }
   }
+}
+
+/// 生成 from_row 方法以从数据库行创建模型实例
+fn generate_from_row_method(struct_name: &syn::Ident, fields: &Punctuated<syn::Field, Comma>) -> TokenStream2 {
+    let field_extractions = fields.iter().enumerate().map(|(i, field)| {
+        let field_name = &field.ident;
+        let field_type = &field.ty;
+        
+        quote! {
+            #field_name: row.get::<_, #field_type>(#i)?
+        }
+    });
+    
+    quote! {
+        /// Create a new instance from a database row
+        pub fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
+            Ok(Self {
+                #(#field_extractions),*
+            })
+        }
+    }
 }
 
 fn generate_migration_impls(
