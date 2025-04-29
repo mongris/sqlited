@@ -490,13 +490,13 @@ fn generate_from_row_method(
     quote! {
         impl #struct_name {
             /// Create a new instance from a database row
-            pub fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
+            pub fn from_row(row: &sqlited::rq::Row) -> sqlited::rq::Result<Self> {
                 Ok(Self {
                     #(#field_extractions),*
                 })
             }
 
-            pub fn from_rows(rows: &[rusqlite::Row]) -> rusqlite::Result<Vec<Self>> {
+            pub fn from_rows(rows: &[sqlited::rq::Row]) -> sqlited::rq::Result<Vec<Self>> {
                 rows.iter().map(Self::from_row).collect()
             }
         }
