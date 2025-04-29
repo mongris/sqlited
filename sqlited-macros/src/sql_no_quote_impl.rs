@@ -10,13 +10,17 @@ struct ParenthesesState {
     depth: usize,
 }
 
+static KEYWORDS: [&'static str; 11] = [
+    "LIMIT", "ORDER", "GROUP", "BY", "DESC", "ASC", "WHERE", "FROM", "SELECT", "JOIN", "HAVING",
+];
+
 // 将TokenStream转换为SQL字符串
 fn tokens_to_sql(input: TokenStream, state: &mut ParenthesesState) -> (String, Span) {
     let mut sql = String::new();
     let mut first_span = None;
     let mut last_was_ident = false;
-    let mut last_was_number = false;
-    
+    // let mut last_was_number = false;
+    let mut last_was_keyword = false;
     
     // 将标记流转换为SQL字符串
     for token in input {
@@ -25,7 +29,13 @@ fn tokens_to_sql(input: TokenStream, state: &mut ParenthesesState) -> (String, S
                 if !sql.is_empty() && !sql.ends_with('(') && !sql.ends_with('.') {
                     sql.push(' ');
                 }
-                sql.push_str(&ident.to_string());
+
+                let ident_str = ident.to_string();
+                sql.push_str(&ident_str);
+
+                let upper_ident = ident_str.to_uppercase();
+                last_was_keyword = KEYWORDS.contains(&upper_ident.as_str());
+                
                 if first_span.is_none() {
                     first_span = Some(Span::call_site());
                 }
@@ -41,12 +51,14 @@ fn tokens_to_sql(input: TokenStream, state: &mut ParenthesesState) -> (String, S
                 if punct_str == "?" {
                     sql.push_str(&punct_str);
                     last_was_ident = false;
-                    last_was_number = false;
+                    // last_was_number = false;
+                    last_was_keyword = false;
                 } else if punct_str == "=" || punct_str == "." || punct_str == "*" || punct_str == ";" {
                     // 这些标点符号不需要前后空格
                     sql.push_str(&punct_str);
                     last_was_ident = false;
-                    last_was_number = false;
+                    // last_was_number = false;
+                    last_was_keyword = false;
                 } else {
                     // 其他标点符号添加前置空格（如果前一个不是标点）
                     if !sql.is_empty() && !sql.ends_with(' ') && last_was_ident {
@@ -54,7 +66,8 @@ fn tokens_to_sql(input: TokenStream, state: &mut ParenthesesState) -> (String, S
                     }
                     sql.push_str(&punct_str);
                     last_was_ident = false;
-                    last_was_number = false;
+                    // last_was_number = false;
+                    last_was_keyword = false;
                 }
             },
             proc_macro::TokenTree::Literal(lit) => {
@@ -65,10 +78,16 @@ fn tokens_to_sql(input: TokenStream, state: &mut ParenthesesState) -> (String, S
                 
                 // 如果前一个标记是问号(?)，且当前是数字，不添加空格（处理 ?1, ?2 等情况）
                 if sql.ends_with('?') && is_number {
-                    // 直接添加数字，不添加空格
+                    // 特殊情况1：问号后面直接跟数字 - 不添加空格（处理参数占位符）
                     sql.push_str(&lit_str);
-                } else if last_was_ident || last_was_number {
-                    // 如果前一个标记是标识符或数字，添加空格
+                } else if last_was_keyword && is_number {
+                    // 特殊情况2：关键字后面跟数字 - 确保有空格（如 LIMIT 1）
+                    if !sql.ends_with(' ') {
+                        sql.push(' ');
+                    }
+                    sql.push_str(&lit_str);
+                } else if !sql.is_empty() && !sql.ends_with(' ') {
+                    // 一般情况：确保字面量前有空格
                     sql.push(' ');
                     sql.push_str(&lit_str);
                 } else {
@@ -76,7 +95,8 @@ fn tokens_to_sql(input: TokenStream, state: &mut ParenthesesState) -> (String, S
                 }
                 
                 last_was_ident = false;
-                last_was_number = is_number;
+                // last_was_number = is_number;
+                last_was_keyword = false;
             },
             proc_macro::TokenTree::Group(group) => {
                 let delimiter = match group.delimiter() {
@@ -103,6 +123,7 @@ fn tokens_to_sql(input: TokenStream, state: &mut ParenthesesState) -> (String, S
                     proc_macro::Delimiter::None => "",
                 };
                 sql.push_str(closing);
+                last_was_keyword = false;
             }
         }
     }

@@ -75,7 +75,7 @@ mod tests {
 
         query! {
             fn get_user_by_id(id: i32) -> anyhow::Result<User> {
-                SELECT * FROM User WHERE id = ?
+                SELECT * FROM User WHERE id = ? LIMIT 1
             }
         }
 
