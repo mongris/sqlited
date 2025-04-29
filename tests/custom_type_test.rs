@@ -73,7 +73,7 @@ mod tests {
         let query = sql!(
             INSERT INTO test_custom (name, axis) VALUES (?, ?),
             TestCustom {
-                name: "水平测试".to_string(),
+                name: "水平测试",
                 axis: Axis::Vertical,
             }
         );

@@ -5,6 +5,7 @@ mod tests {
         prelude::*,
         define_db,
         table,
+        query,
         without_id,
         sql,
         sql_params,
@@ -64,6 +65,31 @@ mod tests {
         ]
     );
 
+    impl TestDb {
+        query! {
+            fn get_user_by_name(name: String) -> Result<User> {
+                SELECT * FROM user WHERE name = ?
+            }
+        }
+
+        query! {
+            fn get_user_by_id(id: i32) -> anyhow::Result<User> {
+                SELECT * FROM user WHERE id = ?
+            }
+        }
+
+        pub fn get_user_by_name2(&self, name: String) -> sqlited::Result<User> {
+            let params = sql_params!(<User> {
+                name: name,
+            });
+            let query = sql!(
+                SELECT * FROM user WHERE name = ?,
+                &params
+            );
+            query.query_row(self.raw_connection(), User::from_row)
+        }
+    }
+
     #[test]
     fn test_without_id_macro() {
         // 使用宏创建 WithoutId 实例
@@ -109,11 +135,19 @@ mod tests {
         let row_data = &db.query("SELECT name, age, email FROM user WHERE rowid = 1", [], 
             |row| Ok((row.get::<_, String>(0)?, row.get::<_, i32>(1)?, row.get::<_, Option<String>>(2)?))
         ).unwrap()[0];
+
         
         let (name, age, email) = row_data;
         assert_eq!(name, "Jane Smith");
         assert_eq!(*age, 28);
         assert_eq!(email, &Some("jane@example.com".to_string()));
+
+        let user = &db.get_user_by_name("Jane Smith".to_string()).unwrap();
+
+        assert_eq!(user.name, "Jane Smith");
+        assert_eq!(user.age, 28);
+        assert_eq!(email, &Some("jane@example.com".to_string()));
+
     }
     
     #[test]
@@ -124,9 +158,9 @@ mod tests {
         
         // 创建用户 - INSERT
         let user_data = sql_params!(<User> {
-            name: "Alex Johnson".to_string(),
+            name: "Alex Johnson",
             age: 35,
-            email: Some("alex@example.com".to_string()),
+            email: Some("alex@example.com"),
         });
 
         let query = User::insert_with(&["name", "age", "email"]);

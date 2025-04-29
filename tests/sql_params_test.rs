@@ -32,7 +32,7 @@ mod tests {
         
         // 使用新的 sql_params 宏，使用一致的格式
         let params = sql_params!(<User> {
-            name: "John Smith".to_string(),
+            name: "John Smith",
             age: 35,
             email: Some("john@example.com".to_string())
         });
@@ -68,7 +68,7 @@ mod tests {
         
         // 使用 sql_params 宏，所有字段都是有效的，为 None 提供显式类型注解
         let params = sql_params!(<User> {
-            name: "Alice Smith".to_string(),
+            name: "Alice Smith",
             age: 28,
             email: None::<String>
         });
@@ -105,14 +105,14 @@ mod tests {
         let params_pro = sql_params!(<User> {
             name: "Pro User".to_string(),
             age: 40,
-            email: Some("pro@example.com".to_string())
+            email: "pro@example.com"
         });
         
         // 使用原始宏
         let params_original = sql_params!(User {
-            name: "Original User".to_string(),
+            name: "Original User",
             age: 45,
-            email: Some("original@example.com".to_string())
+            email: "original@example.com"
         });
         
         // 插入两条记录

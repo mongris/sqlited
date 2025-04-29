@@ -1,8 +1,9 @@
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
-use quote::quote;
-use syn::{parse::{Parse, ParseStream}, Token, Type, Ident, Result, braced};
+use quote::{format_ident, quote, quote_spanned};
+use syn::{braced, parse::{Parse, ParseStream}, Expr, Ident, Result, Token, Type};
 use syn::punctuated::Punctuated;
+use syn::spanned::Spanned;
 
 // 键值对结构
 struct KeyValue {
@@ -68,25 +69,79 @@ fn do_parse(input: ParseStream) -> Result<TokenStream2> {
     let fields = Punctuated::<KeyValue, Token![,]>::parse_terminated(&content)?;
     
     // 收集字段名和值
-    let field_names: Vec<_> = fields.iter().map(|kv| &kv.key).collect();
-    let field_values: Vec<_> = fields.iter().map(|kv| &kv.value).collect();
     
+    // Collect field names
+    let field_names: Vec<_> = fields.iter().map(|kv| &kv.key).collect();
+
+    // Create temporary variable identifiers
+    let temp_vars: Vec<_> = field_names.iter().map(|name| {
+        format_ident!("_temp_{}", name)
+    }).collect();
+
+    // Generate Rc bindings with potential literal conversion
+    let rc_bindings = fields.iter().map(|kv| {
+        let name = &kv.key;
+        let value_expr = &kv.value;
+        let temp_var = format_ident!("_temp_{}", name);
+
+        // Check the expression and generate conversion code if it's a string literal
+        // or Some("string literal")
+        let converted_expr = match value_expr {
+            Expr::Lit(syn::ExprLit { lit: syn::Lit::Str(lit_str), .. }) => {
+                quote_spanned! {lit_str.span()=> #lit_str.to_string() }
+            }
+            Expr::Call(syn::ExprCall { func, args, .. }) => {
+                let is_some = match func.as_ref() {
+                    Expr::Path(expr_path) => expr_path.path.is_ident("Some"),
+                    _ => false,
+                };
+                if is_some && args.len() == 1 {
+                    if let Some(Expr::Lit(syn::ExprLit { lit: syn::Lit::Str(inner_lit_str), .. })) = args.first() {
+                        quote_spanned! {inner_lit_str.span()=> Some(#inner_lit_str.to_string()) }
+                    } else {
+                        quote! { #value_expr }
+                    }
+                } else {
+                    quote! { #value_expr }
+                }
+            }
+            _ => {
+                quote! { #value_expr }
+            }
+        };
+
+        // Wrap the (potentially converted) expression in Rc::new
+        // 使用 value_expr 的 span 来定位可能的类型错误源头
+        quote_spanned! {value_expr.span()=>
+            let #temp_var = std::rc::Rc::new(#converted_expr);
+        }
+    });
+
+    // Generate the type check block using quote_spanned!
+    let type_check_assignments = fields.iter().map(|kv| {
+        let name = &kv.key;
+        let value_expr = &kv.value; // Use the original value expression for span
+        let temp_var = format_ident!("_temp_{}", name);
+
+        // Use the span of the user-provided value expression for the .into() call
+        // 这样，如果 .into() 失败，错误会指向用户输入的具体值
+        quote_spanned! {value_expr.span() =>
+            _model.#name = (*#temp_var).clone().into();
+        }
+    });
+
     // 生成结果代码
     Ok(quote! {
         {
+            // 使用 Rc 包装所有值，确保可以多次引用
+            #( #rc_bindings )*
+
             #[allow(unused_variables, unreachable_code, unused_must_use)]
             {
-                // 创建一个类型检查块，它不会在运行时执行
+                // The type check block now uses spans from user input
                 if false {
-                    // 使用模型实例进行类型检查
                     let mut _model = <#model_type>::default();
-                    
-                    // 检查每个字段
-                    #(
-                        // 尝试对字段赋值，通过 Rust 的类型系统检查类型兼容性
-                        // 如果类型不兼容，编译时会报错并显示期望的类型
-                        _model.#field_names = #field_values;
-                    )*
+                    #( #type_check_assignments )* // Use the generated assignments
                 }
             }
             
@@ -95,7 +150,14 @@ fn do_parse(input: ParseStream) -> Result<TokenStream2> {
             
             // 设置每个字段的值
             #(
-                result.set(stringify!(#field_names), #field_values);
+                {
+                    let value = (*#temp_vars).clone();
+                    let boxed_value: Box<dyn sqlited::rq::ToSql> = Box::new(value);
+                    result.inner.insert(
+                        stringify!(#field_names).to_lowercase(),
+                        boxed_value
+                    );
+                }
             )*
             
             // 创建静态参数持有者
