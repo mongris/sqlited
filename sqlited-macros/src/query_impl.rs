@@ -82,23 +82,15 @@ pub fn query_macro(input: TokenStream) -> TokenStream {
             }
         }
         None
-    });
+    }).collect::<Vec<_>>();
 
     // Generate code based on whether returning a single item or a collection
     if is_vec {
         // Multiple results
         quote! {
             #visibility fn #fn_name(#method_params) -> sqlited::Result<Vec<#model_type>> {
-                let params = sqlited::sql_params!(<#model_type> {
-                    #(#param_names: #param_names,)*
-                });
-
-                let query = sqlited::sql!(
-                    #query_str,
-                    &params
-                );
-
-                query.query_map(self.raw_connection(), #model_type::from_row)
+                let query = sqlited::sql_str!(#query_str);
+                self.query(query, sqlited::rq::params![#(#param_names),*], #model_type::from_row)
             }
         }
         .into()
@@ -106,16 +98,8 @@ pub fn query_macro(input: TokenStream) -> TokenStream {
         // Single result
         quote! {
             #visibility fn #fn_name(#method_params) -> sqlited::Result<#model_type> {
-                let params = sqlited::sql_params!(<#model_type> {
-                    #(#param_names: #param_names,)*
-                });
-
-                let query = sqlited::sql!(
-                    #query_str,
-                    &params
-                );
-
-                query.query_row(self.raw_connection(), #model_type::from_row)
+                let query = sqlited::sql_str!(#query_str);
+                self.query_row(query, sqlited::rq::params![#(#param_names),*], #model_type::from_row)
             }
         }
         .into()

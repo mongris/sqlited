@@ -8,6 +8,7 @@ mod tests {
         query,
         without_id,
         sql,
+        sql_str,
         sql_params,
         UtcDateTime
     };
@@ -79,8 +80,8 @@ mod tests {
         }
 
         query! {
-            fn get_users_by_age(age: i32) -> Result<Vec<User>> {
-                SELECT * FROM user WHERE age > ?
+            fn get_users_by_age(age2: i32) -> Result<Vec<User>> {
+                SELECT * FROM user WHERE age > ?1
             }
         }
 
@@ -89,21 +90,15 @@ mod tests {
                 name: name,
             });
             let query = sql!(
-                SELECT * FROM user WHERE name = ?,
+                SELECT * FROM user WHERE name = ?1,
                 &params
             );
             query.query_row(self.raw_connection(), User::from_row)
         }
 
-        pub fn get_user_by_age2(&self, age: i32) -> sqlited::Result<Vec<User>> {
-            let params = sql_params!(<User> {
-                age,
-            });
-            let query = sql!(
-                SELECT * FROM user WHERE age > ?,
-                &params
-            );
-            query.query_map(self.raw_connection(), User::from_row)
+        pub fn get_user_by_age2(&self, age2: i32) -> sqlited::Result<User> {
+            let query = sql_str!(SELECT * FROM user WHERE age > ?);
+            self.query_row(query, params![age2], User::from_row)
         }
     }
 

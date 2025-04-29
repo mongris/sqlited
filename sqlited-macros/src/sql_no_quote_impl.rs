@@ -14,6 +14,9 @@ struct ParenthesesState {
 fn tokens_to_sql(input: TokenStream, state: &mut ParenthesesState) -> (String, Span) {
     let mut sql = String::new();
     let mut first_span = None;
+    let mut last_was_ident = false;
+    let mut last_was_number = false;
+    
     
     // 将标记流转换为SQL字符串
     for token in input {
@@ -32,25 +35,48 @@ fn tokens_to_sql(input: TokenStream, state: &mut ParenthesesState) -> (String, S
                 if punct_str == "," && state.depth == 0 {
                     // 如果是逗号参数分隔符，停止解析SQL部分
                     break;
+                } 
+                
+                // 特殊情况：处理 ? 后紧跟数字的情况（编号参数）
+                if punct_str == "?" {
+                    sql.push_str(&punct_str);
+                    last_was_ident = false;
+                    last_was_number = false;
                 } else if punct_str == "=" || punct_str == "." || punct_str == "*" || punct_str == ";" {
                     // 这些标点符号不需要前后空格
                     sql.push_str(&punct_str);
+                    last_was_ident = false;
+                    last_was_number = false;
                 } else {
-                    // 其他标点符号添加前置空格
-                    if !sql.is_empty() && !sql.ends_with(' ') {
+                    // 其他标点符号添加前置空格（如果前一个不是标点）
+                    if !sql.is_empty() && !sql.ends_with(' ') && last_was_ident {
                         sql.push(' ');
                     }
                     sql.push_str(&punct_str);
-                    if !punct_str.ends_with(' ') {
-                        sql.push(' ');
-                    }
+                    last_was_ident = false;
+                    last_was_number = false;
                 }
             },
             proc_macro::TokenTree::Literal(lit) => {
-                if !sql.is_empty() && !sql.ends_with(' ') && !sql.ends_with('(') {
+                let lit_str = lit.to_string();
+                
+                // 检测是否为数字字面量
+                let is_number = lit_str.chars().next().map_or(false, |c| c.is_digit(10));
+                
+                // 如果前一个标记是问号(?)，且当前是数字，不添加空格（处理 ?1, ?2 等情况）
+                if sql.ends_with('?') && is_number {
+                    // 直接添加数字，不添加空格
+                    sql.push_str(&lit_str);
+                } else if last_was_ident || last_was_number {
+                    // 如果前一个标记是标识符或数字，添加空格
                     sql.push(' ');
+                    sql.push_str(&lit_str);
+                } else {
+                    sql.push_str(&lit_str);
                 }
-                sql.push_str(&lit.to_string());
+                
+                last_was_ident = false;
+                last_was_number = is_number;
             },
             proc_macro::TokenTree::Group(group) => {
                 let delimiter = match group.delimiter() {

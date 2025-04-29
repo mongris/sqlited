@@ -93,14 +93,12 @@ pub fn check_sql_syntax(sql: &str, span: Span) -> Result<(), TokenStream> {
 
 // Format SQL for better readability
 pub fn format_sql(sql: &str) -> Result<String, ()> {
-    {
-        use sqlformat::FormatOptions;
-        Ok(sqlformat::format(
-            sql,
-            &sqlformat::QueryParams::None,
-            &FormatOptions::default()
-        ))
-    }
+    println!("Formatting SQL: {}", sql);
+    Ok(sqlformat::format(
+        sql,
+        &sqlformat::QueryParams::None,
+        Default::default()
+    ))
 }
 
 // // SQL check macro implementation

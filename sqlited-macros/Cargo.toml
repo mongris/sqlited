@@ -13,5 +13,5 @@ r2d2_sqlite = "0.28"
 proc-macro2 = "1.0"
 quote = "1.0"
 syn = { version = "2.0", features = ["full", "extra-traits"] }
-sqlformat = "0.3"
+sqlformat = "0.2"
 proc-macro-error = "1.0"
