@@ -5,6 +5,9 @@ pub enum SqlitedError {
     #[error("SQLite error: {0}")]
     Rusqlite(#[from] rusqlite::Error),
 
+    #[error("Error: {0}")]
+    Error(#[from] anyhow::Error),
+
     // Use r2d2::Error directly as the source for pool errors encountered *after* pool creation
     #[error("Connection pool operation error: {0}")]
     Pool(#[from] r2d2::Error),
@@ -18,4 +21,4 @@ pub enum SqlitedError {
 }
 
 // Define a Result type alias for convenience
-pub type Result<T> = std::result::Result<T, SqlitedError>;
+pub type Result<T> = anyhow::Result<T, SqlitedError>;

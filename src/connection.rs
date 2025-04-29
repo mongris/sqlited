@@ -1,7 +1,7 @@
 use crate::pool::{ConnectionPool, PoolError, PooledSqliteConnection};
 use crate::savepoint::Savepoint;
 use crate::error::{Result, SqlitedError};
-use rusqlite::Params;
+use rq::Params;
 use std::path::Path;
 
 /// A SQLite connection wrapper
@@ -18,64 +18,64 @@ impl SqliteConnection {
     /// Execute a raw SQL query and return the number of rows affected
     // Update the return type to use the custom Result
     pub fn execute<P: Params>(&self, query: &str, params: P) -> Result<usize> {
-        self.inner.execute(query, params).map_err(Into::into)
+        self.inner.execute(query, params).map_err(SqlitedError::from)
     }
 
     /// Execute a raw SQL query and return the rows as a statement
     // Update the return type to use the custom Result
     pub fn query<F, T, P: Params>(&self, query: &str, params: P, map_fn: F) -> Result<Vec<T>>
     where
-        F: FnMut(&rusqlite::Row) -> rusqlite::Result<T>, // Keep inner map_fn result as rusqlite::Result
+        F: FnMut(&rq::Row) -> rq::Result<T>,
     {
-        // prepare returns rusqlite::Result, ? converts error via From
+        // prepare returns rq::Result, ? converts error via From
         let mut stmt = self.inner.prepare(query)?;
-        // query_map returns rusqlite::Result, ? converts error via From
+        // query_map returns rq::Result, ? converts error via From
         let rows = stmt.query_map(params, map_fn)?;
         // Explicitly specify the collection type for collect using turbofish
-        rows.collect::<rusqlite::Result<Vec<T>>>().map_err(SqlitedError::from)
+        rows.collect::<rq::Result<Vec<T>>>().map_err(SqlitedError::from)
     }
 
     // Update the return type to use the custom Result
     pub fn query_row<P, F, T>(&self, sql: &str, params: P, f: F) -> Result<T>
     where
-        P: rusqlite::Params,
-        F: FnOnce(&rusqlite::Row<'_>) -> rusqlite::Result<T>,
+        P: rq::Params,
+        F: FnOnce(&rq::Row<'_>) -> rq::Result<T>,
     {
-        // prepare returns rusqlite::Result, ? converts error via From
+        // prepare returns rq::Result, ? converts error via From
         let mut stmt = self.raw_connection().prepare(sql)?;
-        // query_row returns rusqlite::Result, map_err converts error via From
+        // query_row returns rq::Result, map_err converts error via From
         stmt.query_row(params, f).map_err(SqlitedError::from)
     }
     
     /// Begin a new transaction
     // Update the return type to use the custom Result
-    pub fn begin_transaction(&mut self) -> Result<rusqlite::Transaction> {
-        // transaction returns rusqlite::Result, map_err converts error via From
+    pub fn begin_transaction(&mut self) -> Result<rq::Transaction> {
+        // transaction returns rq::Result, map_err converts error via From
         self.inner.transaction().map_err(SqlitedError::from)
     }
 
     /// Create a new savepoint with the given name
     // Update the return type to use the custom Result
     pub fn savepoint(&self, name: impl Into<String>) -> Result<Savepoint> {
-        // Assuming Savepoint::new returns rusqlite::Result or your custom Result
+        // Assuming Savepoint::new returns rq::Result or your custom Result
         Savepoint::new(&self.inner, name)
-            .map_err(SqlitedError::from) // Ensure conversion if Savepoint::new returns rusqlite::Result
+            .map_err(SqlitedError::from) // Ensure conversion if Savepoint::new returns rq::Result
     }
 
     /// Create a new savepoint with a unique name
     // Update the return type to use the custom Result
     pub fn savepoint_unique(&self) -> Result<Savepoint> {
-        // Assuming Savepoint::new_unique returns rusqlite::Result or your custom Result
+        // Assuming Savepoint::new_unique returns rq::Result or your custom Result
         Savepoint::new_unique(&self.inner)
-            .map_err(SqlitedError::from) // Ensure conversion if Savepoint::new_unique returns rusqlite::Result
+            .map_err(SqlitedError::from) // Ensure conversion if Savepoint::new_unique returns rq::Result
     }
 
     /// Directly access the underlying SQLite connection
-    pub fn raw_connection(&self) -> &rusqlite::Connection {
+    pub fn raw_connection(&self) -> &rq::Connection {
         &self.inner
     }
 
-    pub fn raw_connection_mut(&mut self) -> &mut rusqlite::Connection {
+    pub fn raw_connection_mut(&mut self) -> &mut rq::Connection {
         &mut self.inner
     }
 
