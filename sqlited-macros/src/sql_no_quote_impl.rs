@@ -175,7 +175,7 @@ pub(crate) fn parse_sql_no_quotes(input: TokenStream) -> (String, Option<TokenSt
         let mut has_update = false;
         let mut has_conflict = false;
         
-        for t in all_tokens.iter().take(30) {
+        for t in all_tokens.iter() {
             if let proc_macro::TokenTree::Ident(i) = t {
                 let upper = i.to_string().to_uppercase();
                 if upper == "SELECT" {
