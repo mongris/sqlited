@@ -362,7 +362,7 @@ pub(crate) fn process_sql(sql: &str, span: Span) -> std::result::Result<String, 
     // 首先转换表名
     let sql_with_transformed_tables = transform_table_names(sql);
 
-    println!("Transformed SQL: {}", sql_with_transformed_tables);
+    // println!("Transformed SQL: {}", sql_with_transformed_tables);
 
     // 按分号分割SQL语句
     let statements: Vec<&str> = sql_with_transformed_tables.split(';')
