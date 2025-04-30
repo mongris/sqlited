@@ -156,7 +156,11 @@ mod tests {
 
         let query = sql!(
             INSERT INTO user (name, age, email) VALUES (?, ?, ?),
-            &params
+            User {
+                name: "Jane Smith".to_string(),
+                age: 28,
+                email: Some("jane@example.com".to_string()),
+            }
         );
         
         // 使用参数进行插入操作
@@ -184,6 +188,27 @@ mod tests {
         assert_eq!(user.age, 28);
         assert_eq!(email, &Some("jane@example.com".to_string()));
 
+    }
+
+    #[test]
+    fn test_sql() {
+        let q = sql_str!(
+            INSERT INTO User (
+                id,
+                name,
+                age,
+                email
+            ) VALUES (
+                ?1,
+                ?2,
+                ?3,
+                ?4
+            )
+            ON CONFLICT DO UPDATE SET
+                name = ?2,
+                age = ?3,
+                email = ?4
+        );
     }
     
     #[test]
