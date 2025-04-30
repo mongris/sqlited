@@ -84,6 +84,18 @@ mod tests {
                 SELECT * FROM User WHERE age > ?1
             }
         }
+
+        query! {
+            fn get_user_name(id: i32) -> Result<String> {
+                SELECT name FROM User WHERE id = ?1
+            }
+        }
+
+        query! {
+            fn get_some_info_by_id(id: i32) -> Result<(i32, String)> {
+                SELECT id, name FROM User WHERE id = ?1
+            }
+        }
         
 
         pub fn get_user_by_name2(&self, name: String) -> sqlited::Result<User> {
@@ -216,6 +228,14 @@ mod tests {
         assert_eq!(email, &Some("alex@example.com".to_string()));
         assert_eq!(*active, true);
 
+        let name = db.get_user_name(user_id).unwrap();
+
+        assert_eq!(name, "Alex Johnson");
+
+        let (db_user_id, name) = db.get_some_info_by_id(user_id).unwrap();
+
+        assert_eq!(db_user_id, user_id);
+        assert_eq!(name, "Alex Johnson");
         
         // 更新用户 - UPDATE
         db.execute(

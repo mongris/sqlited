@@ -68,9 +68,10 @@ pub fn query_macro(input: TokenStream) -> TokenStream {
     let args = &input.args;
     let query_str = &input.query;
 
-    // Determine if we're returning a collection
-    let (model_type, is_vec) = extract_model_type_and_collection(&input.return_type);
-
+    // Determine return type pattern and characteristics
+    let return_type_info = extract_return_type_info(&input.return_type);
+    let (model_type, is_vec, is_tuple) = (return_type_info.model_type, return_type_info.is_vec, return_type_info.is_tuple);
+    
     // Build method params
     let method_params = generate_method_params(args);
 
@@ -84,30 +85,118 @@ pub fn query_macro(input: TokenStream) -> TokenStream {
         None
     }).collect::<Vec<_>>();
 
-    // Generate code based on whether returning a single item or a collection
+    // Generate different code based on return type
     if is_vec {
-        // Multiple results
-        quote! {
-            #visibility fn #fn_name(#method_params) -> sqlited::Result<Vec<#model_type>> {
-                let query = sqlited::sql_str!(#query_str);
-                self.query(query, sqlited::rq::params![#(#param_names),*], #model_type::from_row)
-            }
+        if is_tuple {
+            // Collection of tuples
+            let tuple_elements = extract_tuple_elements(&model_type);
+            let indices = (0..tuple_elements.len()).collect::<Vec<_>>();
+            
+            quote! {
+                #visibility fn #fn_name(#method_params) -> sqlited::Result<Vec<#model_type>> {
+                    let query = sqlited::sql_str!(#query_str);
+                    self.query(query, sqlited::rq::params![#(#param_names),*], |row| {
+                        Ok((
+                            #(row.get(#indices)?,)*
+                        ))
+                    })
+                }
+            }.into()
+        } else if is_primitive_type(&model_type) {
+            // Collection of primitives
+            quote! {
+                #visibility fn #fn_name(#method_params) -> sqlited::Result<Vec<#model_type>> {
+                    let query = sqlited::sql_str!(#query_str);
+                    self.query(query, sqlited::rq::params![#(#param_names),*], |row| row.get(0))
+                }
+            }.into()
+        } else {
+            // Collection of structs (original implementation)
+            quote! {
+                #visibility fn #fn_name(#method_params) -> sqlited::Result<Vec<#model_type>> {
+                    let query = sqlited::sql_str!(#query_str);
+                    self.query(query, sqlited::rq::params![#(#param_names),*], #model_type::from_row)
+                }
+            }.into()
         }
-        .into()
     } else {
-        // Single result
-        quote! {
-            #visibility fn #fn_name(#method_params) -> sqlited::Result<#model_type> {
-                let query = sqlited::sql_str!(#query_str);
-                self.query_row(query, sqlited::rq::params![#(#param_names),*], #model_type::from_row)
-            }
+        if is_tuple {
+            // Single tuple
+            let tuple_elements = extract_tuple_elements(&model_type);
+            let indices = (0..tuple_elements.len()).collect::<Vec<_>>();
+            
+            quote! {
+                #visibility fn #fn_name(#method_params) -> sqlited::Result<#model_type> {
+                    let query = sqlited::sql_str!(#query_str);
+                    self.query_row(query, sqlited::rq::params![#(#param_names),*], |row| {
+                        Ok((
+                            #(row.get(#indices)?,)*
+                        ))
+                    })
+                }
+            }.into()
+        } else if is_primitive_type(&model_type) {
+            // Single primitive value
+            quote! {
+                #visibility fn #fn_name(#method_params) -> sqlited::Result<#model_type> {
+                    let query = sqlited::sql_str!(#query_str);
+                    self.query_row(query, sqlited::rq::params![#(#param_names),*], |row| row.get(0))
+                }
+            }.into()
+        } else {
+            // Single struct (original implementation)
+            quote! {
+                #visibility fn #fn_name(#method_params) -> sqlited::Result<#model_type> {
+                    let query = sqlited::sql_str!(#query_str);
+                    self.query_row(query, sqlited::rq::params![#(#param_names),*], #model_type::from_row)
+                }
+            }.into()
         }
-        .into()
     }
 }
 
-// Extract model type and whether it's a Vec or single item
-fn extract_model_type_and_collection(return_type: &ReturnType) -> (TokenStream2, bool) {
+// Struct to hold return type information
+struct ReturnTypeInfo {
+    model_type: TokenStream2,
+    is_vec: bool,
+    is_tuple: bool,
+}
+
+// Checks if a type is a primitive type
+fn is_primitive_type(model_type: &TokenStream2) -> bool {
+    let type_str = model_type.to_string();
+    
+    // Common primitive type names
+    let primitives = [
+        "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64",
+        "f32", "f64", "bool", "char", "String", "str", "&str",
+        "isize", "usize"
+    ];
+    
+    primitives.iter().any(|&prim| type_str.contains(prim))
+}
+
+// Check if a TokenStream represents a tuple type
+fn is_tuple_type(model_type: &TokenStream2) -> bool {
+    let type_str = model_type.to_string();
+    type_str.starts_with("(") && type_str.ends_with(")")
+}
+
+// Extract elements from a tuple type
+fn extract_tuple_elements(tuple_type: &TokenStream2) -> Vec<TokenStream2> {
+    let type_str = tuple_type.to_string();
+    
+    // Strip parentheses
+    let content = type_str.trim_start_matches('(').trim_end_matches(')');
+    
+    // Split by comma - this is a simple approach, might need more robust parsing
+    content.split(',')
+        .map(|s| s.trim().parse::<TokenStream2>().unwrap_or_else(|_| quote!(Unknown)))
+        .collect()
+}
+
+// Extract model type and return type information
+fn extract_return_type_info(return_type: &ReturnType) -> ReturnTypeInfo {
     match return_type {
         ReturnType::Type(_, ty) => {
             match &**ty {
@@ -136,7 +225,12 @@ fn extract_model_type_and_collection(return_type: &ReturnType) -> (TokenStream2,
                                                         if vec_segment.ident == "Vec" {
                                                             if let syn::PathArguments::AngleBracketed(inner_args) = &vec_segment.arguments {
                                                               if let Some(model_type) = inner_args.args.first() {
-                                                                  return (model_type.to_token_stream(), true);
+                                                                  let model_tokens = model_type.to_token_stream();
+                                                                  return ReturnTypeInfo {
+                                                                      model_type: model_tokens.clone(),
+                                                                      is_vec: true,
+                                                                      is_tuple: is_tuple_type(&model_tokens),
+                                                                  };
                                                               }
                                                           }
                                                         }
@@ -156,11 +250,20 @@ fn extract_model_type_and_collection(return_type: &ReturnType) -> (TokenStream2,
                                             .parse()
                                             .unwrap_or_else(|_| quote!(UnknownType));
 
-                                        return (inner_type_stream, true);
+                                        return ReturnTypeInfo {
+                                            model_type: inner_type_stream.clone(),
+                                            is_vec: true,
+                                            is_tuple: is_tuple_type(&inner_type_stream),
+                                        };
                                     }
 
                                     // Single item
-                                    return (arg.to_token_stream(), false);
+                                    let model_tokens = arg.to_token_stream();
+                                    return ReturnTypeInfo {
+                                        model_type: model_tokens.clone(),
+                                        is_vec: false,
+                                        is_tuple: is_tuple_type(&model_tokens),
+                                    };
                                 }
                             }
                         }
@@ -180,18 +283,35 @@ fn extract_model_type_and_collection(return_type: &ReturnType) -> (TokenStream2,
                         let inner_type_stream: TokenStream2 =
                             inner_type.parse().unwrap_or_else(|_| quote!(UnknownType));
 
-                        return (inner_type_stream, true);
+                        return ReturnTypeInfo {
+                            model_type: inner_type_stream.clone(),
+                            is_vec: true,
+                            is_tuple: is_tuple_type(&inner_type_stream),
+                        };
                     }
 
-                    return (type_path.to_token_stream(), false);
+                    let model_tokens = type_path.to_token_stream();
+                    return ReturnTypeInfo {
+                        model_type: model_tokens.clone(),
+                        is_vec: false,
+                        is_tuple: is_tuple_type(&model_tokens),
+                    };
                 }
                 _ => {}
             }
 
             // Default if we can't parse it
-            (quote! { UnknownType }, false)
+            ReturnTypeInfo {
+                model_type: quote! { UnknownType },
+                is_vec: false,
+                is_tuple: false,
+            }
         }
-        _ => (quote! { UnknownType }, false),
+        _ => ReturnTypeInfo {
+            model_type: quote! { UnknownType },
+            is_vec: false,
+            is_tuple: false,
+        },
     }
 }
 

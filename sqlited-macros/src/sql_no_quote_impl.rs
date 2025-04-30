@@ -39,25 +39,36 @@ fn tokens_to_sql(input: TokenStream, state: &mut ParenthesesState) -> (String, S
                 if first_span.is_none() {
                     first_span = Some(Span::call_site());
                 }
+                
+                last_was_ident = true;
             },
             proc_macro::TokenTree::Punct(punct) => {
                 let punct_str = punct.to_string();
-                if punct_str == "," && state.depth == 0 {
-                    // 如果是逗号参数分隔符，停止解析SQL部分
+                
+                // IMPORTANT CHANGE: Only treat commas as SQL parameter separators 
+                // if they're outside ALL parentheses AND not in a SELECT clause
+                if punct_str == "," && state.depth == 0 && !sql.trim_start().to_uppercase().contains("SELECT") {
+                    // If it's a comma parameter separator outside of SELECT, stop parsing SQL part
                     break;
                 } 
                 
+                // Special handling for commas within SELECT statements - add them normally
+                if punct_str == "," {
+                    if !sql.is_empty() && !sql.ends_with(' ') {
+                        sql.push(' ');
+                    }
+                    sql.push_str(&punct_str);
+                    sql.push(' '); // Add space after comma for better formatting
+                }
                 // 特殊情况：处理 ? 后紧跟数字的情况（编号参数）
-                if punct_str == "?" {
+                else if punct_str == "?" {
                     sql.push_str(&punct_str);
                     last_was_ident = false;
-                    // last_was_number = false;
                     last_was_keyword = false;
                 } else if punct_str == "=" || punct_str == "." || punct_str == "*" || punct_str == ";" {
                     // 这些标点符号不需要前后空格
                     sql.push_str(&punct_str);
                     last_was_ident = false;
-                    // last_was_number = false;
                     last_was_keyword = false;
                 } else {
                     // 其他标点符号添加前置空格（如果前一个不是标点）
@@ -66,7 +77,6 @@ fn tokens_to_sql(input: TokenStream, state: &mut ParenthesesState) -> (String, S
                     }
                     sql.push_str(&punct_str);
                     last_was_ident = false;
-                    // last_was_number = false;
                     last_was_keyword = false;
                 }
             },
@@ -135,14 +145,31 @@ fn tokens_to_sql(input: TokenStream, state: &mut ParenthesesState) -> (String, S
 pub(crate) fn parse_sql_no_quotes(input: TokenStream) -> (String, Option<TokenStream>, Span) {
     let mut all_tokens: Vec<proc_macro::TokenTree> = input.into_iter().collect();
     
-    // 寻找逗号位置，分离SQL和参数部分
-    let comma_pos = all_tokens.iter().position(|t| {
-        if let proc_macro::TokenTree::Punct(p) = t {
-            p.to_string() == ","
-        } else {
-            false
-        }
-    });
+    // If it's a SELECT statement with multiple columns, we need special handling
+    let sql_starts_with_select = all_tokens.iter()
+        .take(10) // Look at first few tokens
+        .any(|t| {
+            if let proc_macro::TokenTree::Ident(i) = t {
+                i.to_string().to_uppercase() == "SELECT"
+            } else {
+                false
+            }
+        });
+    
+    
+    // If it's a SELECT statement, look for a parameter-separating comma more carefully
+    let comma_pos = if sql_starts_with_select {
+        find_parameter_separator_comma(&all_tokens)
+    } else {
+        // Original logic for non-SELECT statements
+        all_tokens.iter().position(|t| {
+            if let proc_macro::TokenTree::Punct(p) = t {
+                p.to_string() == ","
+            } else {
+                false
+            }
+        })
+    };
     
     // 提取参数部分
     let params = if let Some(pos) = comma_pos {
@@ -277,4 +304,44 @@ pub fn sql_no_quotes(input: TokenStream) -> TokenStream {
     };
     
     output.into()
+}
+
+
+// Helper function to find a parameter separator comma in a SELECT statement
+fn find_parameter_separator_comma(tokens: &[proc_macro::TokenTree]) -> Option<usize> {
+    let mut paren_depth = 0;
+    let mut in_from_clause = false;
+    
+    for (i, token) in tokens.iter().enumerate() {
+        match token {
+            proc_macro::TokenTree::Group(g) => {
+                if g.delimiter() == proc_macro::Delimiter::Parenthesis {
+                    paren_depth += 1;
+                }
+            },
+            proc_macro::TokenTree::Ident(id) => {
+                if id.to_string().to_uppercase() == "FROM" {
+                    in_from_clause = true;
+                }
+            },
+            proc_macro::TokenTree::Punct(p) => {
+                let punct_str = p.to_string();
+                
+                // Track parenthesis depth
+                if punct_str == "(" {
+                    paren_depth += 1;
+                } else if punct_str == ")" {
+                    paren_depth = paren_depth - 1;
+                }
+                
+                // If we're at depth 0 and after the FROM clause, a comma is likely a parameter separator
+                if punct_str == "," && paren_depth == 0 && in_from_clause {
+                    return Some(i);
+                }
+            },
+            _ => {}
+        }
+    }
+    
+    None
 }
