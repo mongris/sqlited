@@ -1019,6 +1019,7 @@ macro_rules! define_db {
         }
 
         // 基本 Database 结构体定义
+        #[derive(Clone)]
         pub struct Database {
             pool: std::sync::Arc<$crate::pool::ConnectionPool>,
         }
