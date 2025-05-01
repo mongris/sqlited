@@ -150,9 +150,11 @@ mod tests {
         
         // 创建表
         // db.execute(&BasicTable::create_table_sql(), []).unwrap();
+
+        let conn = db.get_conn().expect("Failed to get connection for PRAGMA");
         
         // 检查生成的SQL表结构
-        let columns = get_column_info(&db.raw_connection(), "basic_table");
+        let columns = get_column_info(&conn, "basic_table");
         
         // 验证id列是自增主键
         let id_column = columns.iter().find(|(name, _, _, _)| name == "id").unwrap();
@@ -185,6 +187,7 @@ mod tests {
     #[test]
     fn test_default_values() {
         let db = ATTR_TEST_DB::memory().unwrap();
+        let conn = db.get_conn().expect("Failed to get connection for PRAGMA");
         
         // 创建表并打印SQL以便调试
         // let sql = DefaultValuesTable::create_table_sql();
@@ -192,7 +195,7 @@ mod tests {
         // db.execute(&sql, []).unwrap();
         
         // 检查生成的SQL表结构
-        let columns = get_column_info(&db.raw_connection(), "default_values_table");
+        let columns = get_column_info(&conn, "default_values_table");
         
         // 验证username有默认值
         let username_column = columns.iter().find(|(name, _, _, _)| name == "username").unwrap();

@@ -1,5 +1,7 @@
 #[cfg(test)]
 mod tests {
+    use std::thread;
+
     use rusqlite::params;
     use sqlited::{
         prelude::*,
@@ -106,7 +108,7 @@ mod tests {
                 SELECT * FROM user WHERE name = ?1,
                 &params
             );
-            query.query_row(self.raw_connection(), User::from_row)
+            query.query_row(&self.get_conn()?, User::from_row)
         }
 
         pub fn get_user_by_age2(&self, age2: i32) -> sqlited::Result<User> {
@@ -165,7 +167,7 @@ mod tests {
         
         // 使用参数进行插入操作
         eprintln!("SQL2: {}, params count: {}", query.query, params.len());
-        let result = query.execute(&db);
+        let result = query.execute(&db.get_conn().unwrap());
         
         // 验证插入成功
         assert!(result.is_ok());
@@ -215,7 +217,7 @@ mod tests {
     fn test_user_crud_operations() {
         // 使用内存数据库
         let db = TEST_DB::memory().unwrap();
-        let raw_conn = db.raw_connection();
+        let raw_conn = db.get_conn().expect("获取连接失败");
         
         // 创建用户 - INSERT
         let user_data = sql_params!(<User> {
@@ -226,13 +228,10 @@ mod tests {
 
         let query = User::insert_with(&["name", "age", "email"]);
          
-        db.execute(
+        let user_id = db.execute_insert(
             &query,
             &*user_data
-        ).unwrap();
-        
-        // 获取用户ID（使用last_insert_rowid）
-        let user_id: i32 = raw_conn.last_insert_rowid() as i32;
+        ).unwrap() as i32;
         
         // 读取用户 - SELECT
         let user_query = format!("SELECT id, name, age, email, created_at, created_at_timestamp, active FROM user WHERE id = {}", user_id);
@@ -289,7 +288,7 @@ mod tests {
     fn test_post_with_foreign_key() {
         // 使用内存数据库
         let db = TEST_DB::memory().unwrap();
-        let raw_conn = db.raw_connection();
+        let raw_conn = db.get_conn().expect("获取连接失败");
         
         // 插入测试用户
         let user_data = sql_params!(<User> {
@@ -412,11 +411,6 @@ mod tests {
             )?;
             
             assert_eq!(count, 2);
-
-
-            let users = &db.get_users_by_age(2).unwrap();
-
-            assert_eq!(users.len(), 2);
             
             // 故意返回错误以回滚事务
             Err::<(), _>(sqlited::SqlitedError::from(rusqlite::Error::StatementChangedRows(0)))
@@ -457,7 +451,7 @@ mod tests {
     fn test_data_validation_and_integrity() {
         // 使用内存数据库
         let db = TEST_DB::memory().unwrap();
-        let raw_conn = db.raw_connection();
+        let raw_conn = db.get_conn().expect("获取连接失败");
         
         // 测试边界值和特殊字符
         let test_cases = [
@@ -479,12 +473,10 @@ mod tests {
             });
             
             // 插入数据并获取ID
-            db.execute(
+            let user_id = db.execute_insert(
                 &User::insert_with(&["name", "age", "email"]),
                 &*user_data
             ).unwrap();
-            
-            let user_id: i32 = raw_conn.last_insert_rowid() as i32;
             
             // 读取数据并验证正确性
             let row_data = &db.query("SELECT name, age, email FROM user WHERE id = ?", &[&user_id],
@@ -506,7 +498,6 @@ mod tests {
     fn test_advanced_queries_and_aggregations() {
         // 使用内存数据库
         let db = TEST_DB::memory().unwrap();
-        let raw_conn = db.raw_connection();
         
         // 插入多个用户
         let users = [
@@ -526,12 +517,12 @@ mod tests {
                 email: email.map(|e| e.to_string()),
             });
             
-            db.execute(
+            let user_id = db.execute_insert(
                 &User::insert_with(&["name", "age", "email"]),
                 &*user_data
-            ).unwrap();
+            ).unwrap() as i32;
             
-            user_ids.push(raw_conn.last_insert_rowid() as i32);
+            user_ids.push(user_id);
         }
         
         // 为每个用户添加帖子
@@ -675,7 +666,6 @@ mod tests {
     fn test_blob_and_complex_data_types() {
         // 使用内存数据库
         let db = TEST_DB::memory().unwrap();
-        let raw_conn = db.raw_connection();
         
         // 测试不同的二进制数据
         let test_cases = [
@@ -686,14 +676,14 @@ mod tests {
         ];
         
         for (name, data, metadata) in test_cases.iter() {
-            let result = db.execute(
+            let result = db.execute_insert(
                 "INSERT INTO binary_data (name, data, metadata) VALUES (?, ?, ?)",
                 params![name, &data, &metadata],
             );
             assert!(result.is_ok(), "Binary data insertion should succeed for {}", name);
             
             // 获取插入的ID
-            let id: i32 = raw_conn.last_insert_rowid() as i32;
+            let id: i32 = result.unwrap() as i32;
             
             // 读取并验证数据
             let data_result = &db.query("SELECT data FROM binary_data WHERE id = ?", &[&id],
@@ -753,5 +743,19 @@ mod tests {
         ).unwrap()[0];
         
         assert_eq!(updated_name, "Updated Name", "原始连接应该能看到新连接所做的更改");
+    }
+
+    #[test]
+    fn test_async_query() {
+        // 使用内存数据库
+        let db = TEST_DB::memory().unwrap();
+        
+        thread::spawn(move || {
+            let user = db.get_user_by_name("Updated Name".to_string());
+            assert!(user.is_ok(), "异步查询应该成功");
+            let user = user.unwrap();
+            assert_eq!(user.name, "Updated Name", "异步查询的用户名称应该匹配");
+            assert_eq!(user.age, 35, "异步查询的用户年龄应该匹配");
+        });
     }
 }

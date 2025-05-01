@@ -12,6 +12,9 @@ pub enum SqlitedError {
     #[error("Connection pool operation error: {0}")]
     Pool(#[from] r2d2::Error),
 
+    #[error("Connection pool creation error: {0}")]
+    AsyncJoinError(String), // Add this variant for async join errors
+
     // You could potentially still include your original PoolError if needed for creation errors,
     // but mapping r2d2::Error directly is often sufficient for get() errors.
     // #[error("Pool creation error: {0}")]

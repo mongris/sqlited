@@ -1020,28 +1020,64 @@ macro_rules! define_db {
 
         // 基本 Database 结构体定义
         pub struct Database {
-            conn: $crate::connection::SqliteConnection,
             pool: std::sync::Arc<$crate::pool::ConnectionPool>,
-        }
-
-        impl std::ops::Deref for Database {
-            type Target = $crate::connection::SqliteConnection;
-
-            fn deref(&self) -> &Self::Target {
-                &self.conn
-            }
         }
         
         impl Database {
-            fn new(conn: $crate::connection::SqliteConnection, pool: std::sync::Arc<$crate::pool::ConnectionPool>) -> Self {
+            fn new(pool: std::sync::Arc<$crate::pool::ConnectionPool>) -> Self {
                 Self {
-                    conn,
                     pool,
                 }
             }
-            
-            pub fn raw_connection(&self) -> &$crate::connection::SqliteConnection {
-                &self.conn
+
+            // Helper to get a connection (internal use)
+            fn get_conn(&self) -> $crate::error::Result<$crate::connection::SqliteConnection> {
+                $crate::connection::get_connection(&self.pool)
+            }
+
+            /// Execute a raw SQL query and return the number of rows affected
+            pub fn execute<P: $crate::rq::Params>(&self, query: &str, params: P) -> $crate::error::Result<usize> {
+                let conn = self.get_conn()?;
+                conn.execute(query, params)
+            }
+
+            /// Execute an INSERT query and return the last inserted row ID.
+            /// Ensures the row ID is retrieved from the same connection used for the insert.
+            pub fn execute_insert<P: $crate::rq::Params>(&self, query: &str, params: P) -> $crate::error::Result<i64> {
+                let conn = self.get_conn()?; // Get a connection
+                conn.execute(query, params)?; // Execute the insert on this connection
+                Ok(conn.last_insert_rowid()) // Get rowid from the *same* connection
+            }
+
+            /// Execute a raw SQL query and return the rows as a statement
+            pub fn query<F, T, P: $crate::rq::Params>(&self, query: &str, params: P, map_fn: F) -> $crate::error::Result<Vec<T>>
+            where
+                F: FnMut(&$crate::rq::Row) -> $crate::rq::Result<T>,
+            {
+                let conn = self.get_conn()?;
+                conn.query(query, params, map_fn)
+            }
+
+            /// Query a single row
+            pub fn query_row<P, F, T>(&self, sql: &str, params: P, f: F) -> $crate::error::Result<T>
+            where
+                P: $crate::rq::Params,
+                F: FnOnce(&$crate::rq::Row<'_>) -> $crate::rq::Result<T>,
+            {
+                let conn = self.get_conn()?;
+                conn.query_row(sql, params, f)
+            }
+
+            /// Get the last inserted row ID.
+            pub fn last_insert_rowid(&self) -> $crate::error::Result<i64> {
+                let conn = self.get_conn()?;
+                Ok(conn.last_insert_rowid()) // Wrap in Ok as get_conn can fail
+            }
+
+            // ... other direct connection methods if needed ...
+
+            pub fn raw_pool(&self) -> &std::sync::Arc<$crate::pool::ConnectionPool> {
+                &self.pool
             }
 
             // 获取表的所有迁移
@@ -1069,8 +1105,11 @@ macro_rules! define_db {
             
             // 应用迁移到此数据库
             pub fn apply_migrations(&self) -> $crate::error::Result<()> {
+                // Get a connection specifically for applying migrations
+                let mut conn = self.get_conn()?;
+
                 // 创建迁移表（如果不存在）
-                self.conn.execute(
+                conn.execute(
                     "CREATE TABLE IF NOT EXISTS _sqlited_migrations (
                         id INTEGER PRIMARY KEY,
                         name TEXT NOT NULL,
@@ -1081,9 +1120,8 @@ macro_rules! define_db {
 
                 // 获取所有表定义的迁移
                 let table_migrations = Self::get_all_table_migrations();
-                
-                // 应用事务确保迁移的原子性
-                self.conn.execute("BEGIN TRANSACTION", [])?;
+
+                let mut tx = conn.raw_connection_mut().transaction()?; 
                 
                 let mut success = true;
 
@@ -1094,7 +1132,7 @@ macro_rules! define_db {
                         continue;
                     }
                     
-                    let already_applied = self.conn.query_row(
+                    let already_applied = tx.query_row(
                         "SELECT COUNT(*) FROM _sqlited_migrations WHERE name = ?",
                         [&name],
                         |row| row.get::<_, i32>(0),
@@ -1108,7 +1146,7 @@ macro_rules! define_db {
                             .collect::<Vec<_>>();
                         
                         for statement in &statements {
-                            match self.conn.execute(statement, []) {
+                            match tx.execute(statement, []) {
                                 Ok(_) => {},
                                 Err(e) => {
                                     eprintln!("Failed to apply migration {}: {}", name, e);
@@ -1120,7 +1158,7 @@ macro_rules! define_db {
                         
                         // 记录已应用的迁移
                         if success {
-                            if let Err(e) = self.conn.execute(
+                            if let Err(e) = tx.execute(
                                 "INSERT INTO _sqlited_migrations (name) VALUES (?)",
                                 [&name],
                             ) {
@@ -1153,19 +1191,17 @@ macro_rules! define_db {
                             let statement_hash = $crate::macros::get_statement_key(statement);
 
                             // query_row now returns crate::error::Result, use ?
-                            let count = self.conn.query_row(
+                            let count = tx.query_row(
                                 "SELECT COUNT(*) FROM _sqlited_migrations WHERE name = ?",
                                 [&statement_hash],
                                 |row| row.get::<_, i32>(0),
                             ).unwrap_or(0); // Keep unwrap_or(0) as fallback if query fails finding row
-
-                            let already_applied = count > 0;
                             
-                            if !already_applied {
-                                match self.conn.execute(statement, []) {
+                            if count == 0 {
+                                match tx.execute(statement, []) {
                                     Ok(_) => {
                                         // 记录已应用的迁移
-                                        if let Err(e) = self.conn.execute(
+                                        if let Err(e) = tx.execute(
                                             "INSERT INTO _sqlited_migrations (name) VALUES (?)",
                                             [&statement_hash],
                                         ) {
@@ -1189,14 +1225,14 @@ macro_rules! define_db {
                 
                 // 根据迁移结果提交或回滚
                 if success {
-                    self.conn.execute("COMMIT", [])?;
+                    tx.commit()?;
                 } else {
-                    // Attempt rollback, ignore error if rollback fails
-                    let _ = self.conn.execute("ROLLBACK", []);
-                    // Return a specific SqlitedError variant if possible, or a generic one
+                    // Rollback happens automatically on drop if not committed,
+                    // but explicit rollback is fine too. We still need to return an error.
+                    // tx.rollback()?; // Optional explicit rollback
                     return Err($crate::error::SqlitedError::Rusqlite($crate::rq::Error::SqliteFailure(
                         $crate::rq::ffi::Error {
-                            code: $crate::rq::ffi::ErrorCode::InternalMalfunction, // Or a more specific code
+                            code: $crate::rq::ffi::ErrorCode::InternalMalfunction,
                             extended_code: 1
                         },
                         Some("Failed to apply migrations".to_string())
@@ -1209,25 +1245,27 @@ macro_rules! define_db {
             /// 返回一个新的连接到同一数据库
             pub fn new_connection(&self) -> $crate::error::Result<Self> {
                 // get_connection already returns the correct Result type
-                let conn = $crate::connection::get_connection(&self.pool)?;
-                Ok(Self::new(conn, self.pool.clone()))
+                Ok(Self::new(self.pool.clone()))
             }
             
             /// 在事务中执行闭包，自动处理提交和回滚
             pub fn transaction<T, F>(&self, f: F) -> $crate::error::Result<T>
             where
-                F: FnOnce(&Self) -> $crate::error::Result<T>, // Closure should also return custom Result
+                F: FnOnce(&mut $crate::rq::Transaction) -> $crate::error::Result<T>,
             {
-                self.conn.execute("BEGIN TRANSACTION", [])?;
+                let mut conn = self.get_conn()?; // Get a connection for the transaction
 
-                match f(self) {
+                // Use the underlying rusqlite connection to start the transaction
+                let mut tx = conn.raw_connection_mut().transaction()?;
+
+                match f(&mut tx) { // Pass the rusqlite transaction to the closure
                     Ok(result) => {
-                        self.conn.execute("COMMIT", [])?;
+                        tx.commit().map_err($crate::error::SqlitedError::from)?;
                         Ok(result)
                     },
                     Err(e) => {
-                        // Attempt rollback, ignore error if rollback fails
-                        let _ = self.conn.execute("ROLLBACK", []);
+                        // Rollback is automatic on drop if commit fails or isn't called.
+                        // Explicit rollback is optional: tx.rollback().ok();
                         Err(e) // Propagate the original error
                     }
                 }
@@ -1239,9 +1277,9 @@ macro_rules! define_db {
         impl $t {
             /// 打开给定路径的数据库（如果为None则使用内存模式）
             fn _open(path: Option<impl AsRef<std::path::Path>>) -> $crate::error::Result<Self> {
-                match path {
-                    Some(path) => {
-                        let path_buf = path.as_ref().to_path_buf();
+                let pool_result = match path {
+                    Some(p) => {
+                        let path_buf = p.as_ref().to_path_buf();
                         let canonical_path = if path_buf.exists() {
                             std::fs::canonicalize(&path_buf).unwrap_or(path_buf)
                         } else {
@@ -1265,39 +1303,25 @@ macro_rules! define_db {
                             if let Some(existing_pool) = pools.get(&canonical_path) {
                                 existing_pool.clone()
                             } else {
-                                // 创建新的连接池
-                                let pool = $crate::pool::ConnectionPool::new(&canonical_path)
+                                let new_pool = $crate::pool::ConnectionPool::new(&canonical_path)
                                     .map(std::sync::Arc::new)
-                                    // Map PoolError to SqlitedError if needed, or define From<PoolError> for SqlitedError
-                                    .map_err(|pool_err| $crate::error::SqlitedError::Rusqlite($crate::rq::Error::SqliteFailure(
-                                        $crate::rq::ffi::Error{code: $crate::rq::ffi::ErrorCode::InternalMalfunction, extended_code:1},
-                                        Some(format!("Pool creation error: {}", pool_err)) // Example mapping
-                                    )))?;
-                                pools.insert(canonical_path, pool.clone());
-                                pool
+                                    .map_err($crate::error::SqlitedError::from)?; // Use From trait
+                                pools.insert(canonical_path, new_pool.clone());
+                                new_pool
                             }
                         };
-                        
-                        // get_connection already returns Result<SqliteConnection>
-                        let conn = $crate::connection::get_connection(&pool)?;
-                        let db = Database::new(conn, pool);
-                        db.apply_migrations()?;
-                        Ok(Self { db })
+                        Ok(pool)
                     },
                     None => {
                         // new_memory_pool returns Result<_, PoolError>, map it
-                        let pool = $crate::pool::ConnectionPool::new_memory()
-                             .map(std::sync::Arc::new)
-                             .map_err(|pool_err| $crate::error::SqlitedError::Rusqlite($crate::rq::Error::SqliteFailure(
-                                 $crate::rq::ffi::Error{code: $crate::rq::ffi::ErrorCode::InternalMalfunction, extended_code:1},
-                                 Some(format!("Memory pool error: {}", pool_err))
-                             )))?;
-                        let conn = $crate::connection::get_connection(&pool)?;
-                        let db = Database::new(conn, pool);
-                        db.apply_migrations()?; // Use ? here
-                        Ok(Self { db })
+                        $crate::connection::new_memory_pool().map(std::sync::Arc::new)
                     }
-                }
+                };
+
+                let pool = pool_result?;
+                let db = Database::new(pool);
+                db.apply_migrations()?; // Apply migrations using the pool
+                Ok(Self { db }) // Create the custom wrapper struct
             }
 
             /// 打开指定路径的数据库
@@ -1326,30 +1350,34 @@ macro_rules! define_db {
                 Self::_open(Some(memory_path))
             }
             
-            /// 获取一个到同一数据库的新连接
+            /// Get a new instance sharing the same database pool
             pub fn new_connection(&self) -> $crate::error::Result<Self> {
+                // Ask the inner Database to create a new instance with the same pool
                 let new_db = self.db.new_connection()?;
                 Ok(Self { db: new_db })
             }
             
-            /// 在事务中执行闭包，自动处理提交和回滚
+            /// Perform operations within a transaction.
+            /// The closure receives a reference to the custom DB type (`&Self`),
+            /// but operations inside should use the provided `rusqlite::Transaction`.
+            /// NOTE: This signature might be less intuitive now. Consider changing
+            /// the closure to `FnOnce(&mut $crate::rq::Transaction) -> $crate::error::Result<T>`
+            /// for clarity, matching the underlying `Database::transaction`.
             pub fn transaction<T, F>(&self, f: F) -> $crate::error::Result<T>
             where
-                F: FnOnce(&Self) -> $crate::error::Result<T>,
+                // Option 1: Keep original signature (closure needs to call self.db.transaction internally) - Less direct
+                // F: FnOnce(&Self) -> $crate::error::Result<T>,
+                // Option 2: Change signature for clarity (Recommended)
+                F: FnOnce(&mut $crate::rq::Transaction) -> $crate::error::Result<T>,
             {
-                self.conn.execute("BEGIN TRANSACTION", [])?;
+                // Delegate directly to the inner Database's transaction method
+                self.db.transaction(f)
 
-                match f(self) {
-                    Ok(result) => {
-                        self.conn.execute("COMMIT", [])?;
-                        Ok(result)
-                    },
-                    Err(e) => {
-                        // 尝试回滚，忽略回滚错误
-                        let _ = self.conn.execute("ROLLBACK", []);
-                        Err(e) // 传播原始错误
-                    }
-                }
+                // If using Option 1 signature:
+                // self.db.transaction(|tx_self| { // tx_self is &Database
+                //     // Need a way to run the user's closure `f` which expects `&Self`
+                //     // This becomes awkward. Option 2 is better.
+                // })
             }
         }
         
