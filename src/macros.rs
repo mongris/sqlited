@@ -1005,6 +1005,7 @@ macro_rules! define_db {
         ]
     ) => {
         // 定义自定义结构体，包装 Database
+        #[derive(Clone)]
         pub struct $t {
             db: Database
         }
