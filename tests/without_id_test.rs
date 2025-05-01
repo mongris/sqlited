@@ -70,7 +70,7 @@ mod tests {
 
     impl TestDb {
         query! {
-            fn get_user_by_name(name: String) -> Result<User> {
+            fn get_user_by_name(name: &str) -> Result<User> {
                 SELECT * FROM User WHERE name = ?
             }
         }
@@ -98,9 +98,16 @@ mod tests {
                 SELECT id, name FROM User WHERE id = ?1
             }
         }
+
+        query! {
+            fn save_user(id: i32, name: &str, age: i32) -> Result<()> {
+                UPDATE User SET name = ?2, age = ?3 WHERE id = ?1
+            }
+        }
         
 
         pub fn get_user_by_name2(&self, name: String) -> sqlited::Result<User> {
+            let s = sql_str!(UPDATE User SET name = ?2 WHERE id = ?1);
             let params = sql_params!(<User> {
                 name: name,
             });
@@ -184,7 +191,7 @@ mod tests {
         assert_eq!(*age, 28);
         assert_eq!(email, &Some("jane@example.com".to_string()));
 
-        let user = &db.get_user_by_name("Jane Smith".to_string()).unwrap();
+        let user = &db.get_user_by_name("Jane Smith").unwrap();
 
         assert_eq!(user.name, "Jane Smith");
         assert_eq!(user.age, 28);
@@ -262,10 +269,12 @@ mod tests {
         assert_eq!(name, "Alex Johnson");
         
         // 更新用户 - UPDATE
-        db.execute(
-            "UPDATE user SET name = ?, age = ? WHERE id = ?",
-            params![&"Alex Smith", &40, &user_id],
-        ).unwrap();
+        // db.execute(
+        //     "UPDATE user SET name = ?, age = ? WHERE id = ?",
+        //     params![&"Alex Smith", &40, &user_id],
+        // ).unwrap();
+
+        db.save_user(user_id, "Alex Smith", 40);
         
         // 验证更新成功
         let updated_data = &db.query("SELECT name, age FROM user WHERE id = ?", &[&user_id], 
@@ -751,7 +760,7 @@ mod tests {
         let db = TEST_DB::memory().unwrap();
         
         thread::spawn(move || {
-            let user = db.get_user_by_name("Updated Name".to_string());
+            let user = db.get_user_by_name("Updated Name");
             assert!(user.is_ok(), "异步查询应该成功");
             let user = user.unwrap();
             assert_eq!(user.name, "Updated Name", "异步查询的用户名称应该匹配");

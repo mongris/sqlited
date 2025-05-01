@@ -70,10 +70,11 @@ pub fn query_macro(input: TokenStream) -> TokenStream {
 
     // Determine return type pattern and characteristics
     let return_type_info = extract_return_type_info(&input.return_type);
-    let (model_type, is_vec, is_tuple) = (
+    let (model_type, is_vec, is_tuple, is_unit) = (
         return_type_info.model_type,
         return_type_info.is_vec,
         return_type_info.is_tuple,
+        return_type_info.is_unit,
     );
 
     // Build method params
@@ -93,7 +94,16 @@ pub fn query_macro(input: TokenStream) -> TokenStream {
         .collect::<Vec<_>>();
 
     // Generate different code based on return type
-    if is_vec {
+    if is_unit { // Handle Result<()> case first
+        quote! {
+            #visibility fn #fn_name(#method_params) -> sqlited::Result<()> {
+                let query = sqlited::sql_str!(#query_str);
+                self.execute(query, sqlited::rq::params![#(#param_names),*])?;
+                Ok(())
+            }
+        }
+        .into()
+    } else if is_vec {
         if is_tuple {
             // Collection of tuples
             let tuple_elements = extract_tuple_elements(&model_type);
@@ -171,6 +181,13 @@ struct ReturnTypeInfo {
     model_type: TokenStream2,
     is_vec: bool,
     is_tuple: bool,
+    is_unit: bool,
+}
+
+// Checks if a type is the unit type ()
+fn is_unit_type(model_type: &TokenStream2) -> bool {
+    let type_str = model_type.to_string().replace(" ", "");
+    type_str == "()"
 }
 
 // Checks if a type is a primitive type
@@ -224,109 +241,76 @@ fn extract_return_type_info(return_type: &ReturnType) -> ReturnTypeInfo {
                         {
                             if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
                                 if let Some(arg) = args.args.first() {
-                                    let type_str = quote!(#arg).to_string();
-
-                                    // Check if it's a Vec<T>
-                                    if type_str.starts_with("Vec < ")
-                                        || type_str.starts_with("Vec<")
-                                    {
-                                        // Extract inner type from Vec<T>
-                                        match arg {
-                                            GenericArgument::Type(generic_type) => {
-                                                if let Type::Path(inner_path) = generic_type {
-                                                    if let Some(vec_segment) =
-                                                        inner_path.path.segments.first()
-                                                    {
-                                                        if vec_segment.ident == "Vec" {
-                                                            if let syn::PathArguments::AngleBracketed(inner_args) = &vec_segment.arguments {
-                                                              if let Some(model_type) = inner_args.args.first() {
-                                                                  let model_tokens = model_type.to_token_stream();
-                                                                  return ReturnTypeInfo {
-                                                                      model_type: model_tokens.clone(),
-                                                                      is_vec: true,
-                                                                      is_tuple: is_tuple_type(&model_tokens),
-                                                                  };
-                                                              }
-                                                          }
-                                                        }
+                                    // Check for Vec<T> first
+                                    if let GenericArgument::Type(Type::Path(tp)) = arg {
+                                        if let Some(vec_segment) = tp.path.segments.first() {
+                                            if vec_segment.ident == "Vec" {
+                                                if let syn::PathArguments::AngleBracketed(inner_args) = &vec_segment.arguments {
+                                                    if let Some(model_arg) = inner_args.args.first() {
+                                                        let model_tokens = model_arg.to_token_stream();
+                                                        return ReturnTypeInfo {
+                                                            model_type: model_tokens.clone(),
+                                                            is_vec: true,
+                                                            is_tuple: is_tuple_type(&model_tokens),
+                                                            is_unit: false, // Vec cannot be unit
+                                                        };
                                                     }
                                                 }
                                             }
-                                            _ => {}
                                         }
-
-                                        // Try parsing more directly
-                                        let s = type_str.trim();
-                                        let idx_start = s.find('<').unwrap_or(0) + 1;
-                                        let idx_end = s.rfind('>').unwrap_or(s.len());
-                                        let inner_type = &s[idx_start..idx_end].trim();
-
-                                        let inner_type_stream: TokenStream2 = inner_type
-                                            .parse()
-                                            .unwrap_or_else(|_| quote!(UnknownType));
-
-                                        return ReturnTypeInfo {
-                                            model_type: inner_type_stream.clone(),
-                                            is_vec: true,
-                                            is_tuple: is_tuple_type(&inner_type_stream),
-                                        };
                                     }
 
-                                    // Single item
+                                    // Handle single item T in Result<T>
                                     let model_tokens = arg.to_token_stream();
+                                    let is_unit = is_unit_type(&model_tokens);
                                     return ReturnTypeInfo {
                                         model_type: model_tokens.clone(),
                                         is_vec: false,
-                                        is_tuple: is_tuple_type(&model_tokens),
+                                        is_tuple: is_tuple_type(&model_tokens), // is_tuple_type now excludes ()
+                                        is_unit,
                                     };
                                 }
                             }
                         }
                     }
-
-                    // Direct return type (no Result wrapper)
-                    let type_str = quote!(#type_path).to_string();
-                    let is_vec = type_str.starts_with("Vec < ") || type_str.starts_with("Vec<");
-
-                    if is_vec {
-                        // Try to extract inner type
-                        let s = type_str.trim();
-                        let idx_start = s.find('<').unwrap_or(0) + 1;
-                        let idx_end = s.rfind('>').unwrap_or(s.len());
-                        let inner_type = &s[idx_start..idx_end].trim();
-
-                        let inner_type_stream: TokenStream2 =
-                            inner_type.parse().unwrap_or_else(|_| quote!(UnknownType));
-
-                        return ReturnTypeInfo {
-                            model_type: inner_type_stream.clone(),
-                            is_vec: true,
-                            is_tuple: is_tuple_type(&inner_type_stream),
-                        };
-                    }
-
+                    // Fallback for non-Result types (less likely for query!)
                     let model_tokens = type_path.to_token_stream();
                     return ReturnTypeInfo {
                         model_type: model_tokens.clone(),
                         is_vec: false,
-                        is_tuple: is_tuple_type(&model_tokens),
+                        is_tuple: false, // Assume non-Result direct types aren't tuples/unit for now
+                        is_unit: false,
                     };
+                }
+                Type::Tuple(type_tuple) => {
+                    // Handle direct () return type if needed, though Result<()> is standard
+                    if type_tuple.elems.is_empty() {
+                         return ReturnTypeInfo {
+                            model_type: quote! { () },
+                            is_vec: false,
+                            is_tuple: false,
+                            is_unit: true,
+                        };
+                    }
                 }
                 _ => {}
             }
-
-            // Default if we can't parse it
-            ReturnTypeInfo {
-                model_type: quote! { UnknownType },
+        }
+        ReturnType::Default => { // Handle -> () case (implies success or panic)
+             return ReturnTypeInfo {
+                model_type: quote! { () },
                 is_vec: false,
                 is_tuple: false,
-            }
+                is_unit: true, // Treat as unit for execution context
+            };
         }
-        _ => ReturnTypeInfo {
-            model_type: quote! { UnknownType },
-            is_vec: false,
-            is_tuple: false,
-        },
+    }
+    // Default fallback
+    ReturnTypeInfo {
+        model_type: quote! { UnknownType },
+        is_vec: false,
+        is_tuple: false,
+        is_unit: false,
     }
 }
 

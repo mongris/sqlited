@@ -356,7 +356,7 @@ fn transform_table_names(sql: &str) -> String {
     for i in 0..words.len().saturating_sub(1) {
         let word = words[i];
         if KEYWORDS.contains(&word.to_uppercase().as_str()) {
-            let pre_keyword = words[i - 1];
+            let pre_keyword = if i == 0 { "" } else { words[i - 1] };
             let potential_table = words[i + 1];
 
             // 检查是否是驼峰命名（首字母大写）
