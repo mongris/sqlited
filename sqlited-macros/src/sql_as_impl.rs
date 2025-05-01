@@ -176,13 +176,13 @@ pub fn sql_as(attr: TokenStream, input: TokenStream) -> TokenStream {
                 false
             };
 
-            // 如果是新类型，生成 Deref 和 DerefMut 实现
-            let deref_impl = if is_newtype {
+            // 如果是新类型，生成 Deref, DerefMut 和 From 实现
+            let (deref_impl, from_impl) = if is_newtype {
                 if let Fields::Unnamed(unnamed_fields) = fields {
                     let inner_type = &unnamed_fields.unnamed.first().unwrap().ty;
 
-                    quote! {
-                        impl std::ops::Deref for #type_name {
+                    let deref = quote! {
+                        impl #generics std::ops::Deref for #type_name #generics {
                             type Target = #inner_type;
 
                             #[inline(always)]
@@ -191,18 +191,37 @@ pub fn sql_as(attr: TokenStream, input: TokenStream) -> TokenStream {
                             }
                         }
 
-                        impl std::ops::DerefMut for #type_name {
+                        impl #generics std::ops::DerefMut for #type_name #generics {
                             #[inline(always)]
                             fn deref_mut(&mut self) -> &mut Self::Target {
                                 &mut self.0
                             }
                         }
-                    }
+                    };
+
+                    // Add From implementations for newtype
+                    let from = quote! {
+                        impl #generics From<#type_name #generics> for #inner_type {
+                            #[inline(always)]
+                            fn from(val: #type_name #generics) -> Self {
+                                val.0
+                            }
+                        }
+
+                        impl #generics From<#inner_type> for #type_name #generics {
+                            #[inline(always)]
+                            fn from(val: #inner_type) -> Self {
+                                #type_name(val)
+                            }
+                        }
+                    };
+
+                    (deref, from) // Return both Deref/DerefMut and From impls
                 } else {
-                    quote! {}
+                    (quote! {}, quote! {}) // Should not happen if is_newtype is true
                 }
             } else {
-                quote! {}
+                (quote! {}, quote! {}) // Not a newtype
             };
 
             // 生成扩展代码
@@ -214,8 +233,9 @@ pub fn sql_as(attr: TokenStream, input: TokenStream) -> TokenStream {
                     #[repr(transparent)]  // 为新类型添加 repr(transparent) 属性
                     #vis #struct_def
 
-                    // 如果是新类型，添加 Deref 和 DerefMut 实现
+                    // 如果是新类型，添加 Deref, DerefMut 和 From 实现
                     #deref_impl
+                    #from_impl
 
                     sqlited::sqld!(#style #type_name);
                 }
