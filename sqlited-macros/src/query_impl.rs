@@ -1,9 +1,8 @@
 use proc_macro::TokenStream;
-use proc_macro2::{Span, TokenStream as TokenStream2};
+use proc_macro2::TokenStream as TokenStream2;
 use quote::{ToTokens, quote};
 use syn::{
-    Block, FnArg, GenericArgument, Ident, Result as SynResult, ReturnType, Token, Type, Visibility,
-    braced,
+    FnArg, GenericArgument, Ident, Result as SynResult, ReturnType, Token, Type, Visibility,
     parse::{Parse, ParseStream},
     parse_macro_input,
     punctuated::Punctuated,
@@ -11,6 +10,7 @@ use syn::{
 };
 
 // Query macro input parse structure
+#[allow(dead_code)]
 struct QueryInput {
     visibility: Visibility,
     fn_token: Token![fn],
@@ -70,20 +70,27 @@ pub fn query_macro(input: TokenStream) -> TokenStream {
 
     // Determine return type pattern and characteristics
     let return_type_info = extract_return_type_info(&input.return_type);
-    let (model_type, is_vec, is_tuple) = (return_type_info.model_type, return_type_info.is_vec, return_type_info.is_tuple);
-    
+    let (model_type, is_vec, is_tuple) = (
+        return_type_info.model_type,
+        return_type_info.is_vec,
+        return_type_info.is_tuple,
+    );
+
     // Build method params
     let method_params = generate_method_params(args);
 
     // Build param names for sql_params! macro
-    let param_names = args.iter().filter_map(|arg| {
-        if let FnArg::Typed(pat_type) = arg {
-            if let syn::Pat::Ident(pat_ident) = &*pat_type.pat {
-                return Some(pat_ident.ident.clone());
+    let param_names = args
+        .iter()
+        .filter_map(|arg| {
+            if let FnArg::Typed(pat_type) = arg {
+                if let syn::Pat::Ident(pat_ident) = &*pat_type.pat {
+                    return Some(pat_ident.ident.clone());
+                }
             }
-        }
-        None
-    }).collect::<Vec<_>>();
+            None
+        })
+        .collect::<Vec<_>>();
 
     // Generate different code based on return type
     if is_vec {
@@ -91,7 +98,7 @@ pub fn query_macro(input: TokenStream) -> TokenStream {
             // Collection of tuples
             let tuple_elements = extract_tuple_elements(&model_type);
             let indices = (0..tuple_elements.len()).collect::<Vec<_>>();
-            
+
             quote! {
                 #visibility fn #fn_name(#method_params) -> sqlited::Result<Vec<#model_type>> {
                     let query = sqlited::sql_str!(#query_str);
@@ -101,7 +108,8 @@ pub fn query_macro(input: TokenStream) -> TokenStream {
                         ))
                     })
                 }
-            }.into()
+            }
+            .into()
         } else if is_primitive_type(&model_type) {
             // Collection of primitives
             quote! {
@@ -109,7 +117,8 @@ pub fn query_macro(input: TokenStream) -> TokenStream {
                     let query = sqlited::sql_str!(#query_str);
                     self.query(query, sqlited::rq::params![#(#param_names),*], |row| row.get(0))
                 }
-            }.into()
+            }
+            .into()
         } else {
             // Collection of structs (original implementation)
             quote! {
@@ -124,7 +133,7 @@ pub fn query_macro(input: TokenStream) -> TokenStream {
             // Single tuple
             let tuple_elements = extract_tuple_elements(&model_type);
             let indices = (0..tuple_elements.len()).collect::<Vec<_>>();
-            
+
             quote! {
                 #visibility fn #fn_name(#method_params) -> sqlited::Result<#model_type> {
                     let query = sqlited::sql_str!(#query_str);
@@ -134,7 +143,8 @@ pub fn query_macro(input: TokenStream) -> TokenStream {
                         ))
                     })
                 }
-            }.into()
+            }
+            .into()
         } else if is_primitive_type(&model_type) {
             // Single primitive value
             quote! {
@@ -142,7 +152,8 @@ pub fn query_macro(input: TokenStream) -> TokenStream {
                     let query = sqlited::sql_str!(#query_str);
                     self.query_row(query, sqlited::rq::params![#(#param_names),*], |row| row.get(0))
                 }
-            }.into()
+            }
+            .into()
         } else {
             // Single struct (original implementation)
             quote! {
@@ -165,14 +176,13 @@ struct ReturnTypeInfo {
 // Checks if a type is a primitive type
 fn is_primitive_type(model_type: &TokenStream2) -> bool {
     let type_str = model_type.to_string();
-    
+
     // Common primitive type names
     let primitives = [
-        "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64",
-        "f32", "f64", "bool", "char", "String", "str", "&str",
-        "isize", "usize"
+        "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f32", "f64", "bool", "char",
+        "String", "str", "&str", "isize", "usize",
     ];
-    
+
     primitives.iter().any(|&prim| type_str.contains(prim))
 }
 
@@ -185,13 +195,18 @@ fn is_tuple_type(model_type: &TokenStream2) -> bool {
 // Extract elements from a tuple type
 fn extract_tuple_elements(tuple_type: &TokenStream2) -> Vec<TokenStream2> {
     let type_str = tuple_type.to_string();
-    
+
     // Strip parentheses
     let content = type_str.trim_start_matches('(').trim_end_matches(')');
-    
+
     // Split by comma - this is a simple approach, might need more robust parsing
-    content.split(',')
-        .map(|s| s.trim().parse::<TokenStream2>().unwrap_or_else(|_| quote!(Unknown)))
+    content
+        .split(',')
+        .map(|s| {
+            s.trim()
+                .parse::<TokenStream2>()
+                .unwrap_or_else(|_| quote!(Unknown))
+        })
         .collect()
 }
 
