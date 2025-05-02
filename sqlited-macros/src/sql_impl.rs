@@ -8,7 +8,12 @@ use crate::sql_params_impl::sql_params;
 
 pub fn sql(input: TokenStream) -> TokenStream {
     // 解析输入，提取SQL和参数
-    let (sql_string, params, span) = parse_sql_no_quotes(input);
+    let (sql_string_result, params, span) = parse_sql_no_quotes(input);
+
+    let sql_string = match sql_string_result {
+        Ok((s, _span)) => s, // 解析成功，获取 SQL 字符串
+        Err(e) => return e.to_compile_error().into(), // 解析失败，返回编译错误
+    };
 
     // 处理并验证SQL语句
     let validated_sql = match process_sql(&sql_string, span) {
