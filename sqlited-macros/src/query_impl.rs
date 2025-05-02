@@ -192,15 +192,26 @@ fn is_unit_type(model_type: &TokenStream2) -> bool {
 
 // Checks if a type is a primitive type
 fn is_primitive_type(model_type: &TokenStream2) -> bool {
-    let type_str = model_type.to_string();
+    let type_str = model_type.to_string().replace(" ", "");
 
     // Common primitive type names
     let primitives = [
-        "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f32", "f64", "bool", "char",
-        "String", "str", "&str", "isize", "usize",
+        "i8", "i16", "i32", "i64",
+        "u8", "u16", "u32", "u64",
+        "f32", "f64",
+        "bool",
+        "char",
+        "String", "&str",
+        "isize", "usize",
+        // 可以根据需要添加其他被视为基本类型的，例如日期/时间类型或 BLOB
+        "Vec<u8>", // 精确匹配 Vec<u8>
+        // 如果你的 UtcDateTime 或 Timestamp 可以直接从单个 SQL 值转换，也可以加入
+        "UtcDateTime",
+        "Timestamp",
     ];
 
-    primitives.iter().any(|&prim| type_str.contains(prim))
+    // 进行精确匹配
+    primitives.iter().any(|&prim| type_str == prim)
 }
 
 // Check if a TokenStream represents a tuple type
