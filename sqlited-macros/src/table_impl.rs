@@ -1090,8 +1090,11 @@ fn generate_create_table_sql(
         }
         // 添加 NOT NULL 约束
         if !field_attr.is_autoincrement && !field_attr.is_primary_key {
+            // Check if the type is Option<T>
+            let is_option = is_option_type(field_type);
+            
             // 处理非空约束
-            if field_attr.is_not_null {
+            if field_attr.is_not_null || !is_option {
                 constraints.push(quote! { " NOT NULL" });
             } else {
                 // 获取 SQLite 类型名称
@@ -1101,7 +1104,7 @@ fn generate_create_table_sql(
                 .to_string();
 
                 // 检查是否为 Option 或 BLOB
-                if is_option_type(field_type) && sqlite_type != "\"BLOB\"" {
+                if is_option && sqlite_type != "\"BLOB\"" {
                     constraints.push(quote! { " NULL" });
                 }
             }
