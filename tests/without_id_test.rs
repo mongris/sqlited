@@ -4,15 +4,7 @@ mod tests {
 
     use rusqlite::params;
     use sqlited::{
-        prelude::*,
-        define_db,
-        table,
-        query,
-        without_id,
-        sql,
-        sql_str,
-        sql_params,
-        UtcDateTime
+        check, define_db, not_null, prelude::*, query, sql, sql_params, sql_str, table, unique, without_id, UtcDateTime
     };
 
     // 定义一个用于测试的用户模型
@@ -44,6 +36,18 @@ mod tests {
         long_i64: i64,
     }
 
+    #[table]
+    struct ConstrainedUser {
+        #[autoincrement]
+        id: i32,
+        #[unique]
+        username: String,
+        #[unique]
+        email: Option<String>,
+        #[check("age >= 18")]
+        age: i32,
+    }
+
     // 使用 define_db 定义测试数据库
     define_db!(
         pub static ref TEST_DB: TestDb<()> = [
@@ -51,12 +55,7 @@ mod tests {
             TestPost,
             
             // 创建带有约束的表
-            "CREATE TABLE IF NOT EXISTS constrained_user (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                username TEXT NOT NULL UNIQUE,
-                email TEXT UNIQUE,
-                age INTEGER NOT NULL CHECK(age >= 18)
-            )",
+            ConstrainedUser,
             
             // 创建表存储二进制数据
             "CREATE TABLE IF NOT EXISTS binary_data (
@@ -102,6 +101,12 @@ mod tests {
         query! {
             fn save_user(id: i32, name: &str, age: i32) -> Result<()> {
                 UPDATE User SET name = ?2, age = ?3 WHERE id = ?1
+            }
+        }
+
+        query! {
+            fn get_last_user() -> Result<ConstrainedUser> {
+                SELECT * FROM ConstrainedUser ORDER BY id DESC LIMIT 1
             }
         }
         
@@ -460,7 +465,6 @@ mod tests {
     fn test_data_validation_and_integrity() {
         // 使用内存数据库
         let db = TEST_DB::memory().unwrap();
-        let raw_conn = db.get_conn().expect("获取连接失败");
         
         // 测试边界值和特殊字符
         let test_cases = [
@@ -669,6 +673,10 @@ mod tests {
         ).unwrap()[0];
         
         assert_eq!(count, 1, "约束测试后应该只有一个有效用户");
+
+        let user = db.get_last_user().unwrap();
+        assert_eq!(user.username, "valid_user", "最后插入的用户应该是有效用户");
+        assert_eq!(user.age, 30, "有效用户的年龄应该是30");
     }
     
     #[test]
