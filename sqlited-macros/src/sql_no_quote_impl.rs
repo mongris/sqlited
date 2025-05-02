@@ -1,15 +1,13 @@
 use proc_macro::TokenStream;
-use proc_macro2::{Span, TokenStream as TokenStream2, TokenTree as TokenTree2, Delimiter, Spacing};
+use proc_macro2::{Span, TokenStream as TokenStream2, TokenTree as TokenTree2, Delimiter};
 use quote::quote;
 use syn::{
-    parse::{Parse, ParseStream, Result as SynResult}, // 使用 syn 的 ParseStream
+    parse::{Parser, ParseStream, Result as SynResult}, // 使用 syn 的 ParseStream
     Ident, LitStr, Token, Error, // 使用 syn 的 Ident, LitStr, Token, Error
-    token, // 引入 syn::token
 };
 
 use crate::{sql_check_impl, utils::convert_to_snake_name};
 
-// --- 开始: 定义 SQL 关键字 ---
 // 使用 syn::custom_keyword 来定义 SQL 关键字，以便更精确地解析
 mod kw {
     syn::custom_keyword!(FROM);
@@ -25,9 +23,6 @@ mod kw {
     syn::custom_keyword!(WHERE);
     syn::custom_keyword!(NOTHING);
 }
-// --- 结束: 定义 SQL 关键字 ---
-
-// --- 开始: 新的基于 syn 的 SQL 解析器 ---
 
 struct SqlBuilder {
     sql: String,
@@ -143,7 +138,7 @@ fn parse_sql(input: ParseStream) -> SynResult<(String, Span)> {
 
             // 如果是 LEFT/INNER 等，后面还会有 JOIN 关键字
             if input.peek(kw::JOIN) {
-                 let join_token = input.parse::<kw::JOIN>()?;
+                 input.parse::<kw::JOIN>()?; // 解析并消耗 JOIN 关键字
                  builder.push("JOIN", true, true);
             } else if join_keyword.to_string().to_uppercase() != "JOIN" {
                  // 如果解析的不是 JOIN 本身，且后面没有 JOIN，则可能语法错误或需要更复杂的解析
@@ -156,7 +151,7 @@ fn parse_sql(input: ParseStream) -> SynResult<(String, Span)> {
             builder.push("DO", true, true);
 
             if input.peek(kw::UPDATE) {
-                // 保持现有的 DO UPDATE 处理逻辑
+                // DO UPDATE 处理逻辑
                 input.parse::<kw::UPDATE>()?; // 解析并消耗 UPDATE 关键字
                 builder.push("UPDATE", true, true);
                 // 检查 SET，避免误认表名
@@ -217,7 +212,7 @@ fn parse_sql(input: ParseStream) -> SynResult<(String, Span)> {
                         builder.push(start_delimiter, true, false); // 开括号前允许空格，后不允许
 
                         // 解析括号内的流
-                        let (inner_sql, _) = syn::parse::Parser::parse2(parse_sql, group.stream())?;
+                        let (inner_sql, _) = Parser::parse2(parse_sql, group.stream())?;
                         // 直接将内部解析结果追加，内部已处理空格
                         builder.sql.push_str(&inner_sql);
                         // 确保内部解析后，闭括号前没有多余空格
@@ -276,17 +271,12 @@ fn parse_optional_table_name(input: ParseStream, builder: &mut SqlBuilder) -> Sy
     Ok(())
 }
 
-// --- 结束: 新的基于 syn 的 SQL 解析器 ---
-
-
-// --- 开始: 调整后的宏入口和处理流程 ---
-
-// 参数分割逻辑保持不变，但现在返回 TokenStream
+// 参数分割，返回 TokenStream
 pub(crate) fn parse_sql_no_quotes(input: TokenStream) -> (Result<(String, Span), Error>, Option<TokenStream>, Span) {
     let mut all_tokens: Vec<proc_macro::TokenTree> = input.into_iter().collect();
     let first_span = all_tokens.first().map(|t| t.span().into()).unwrap_or_else(Span::call_site); // 使用 proc_macro2::Span
 
-    let needs_special_handling = { /* ... 保持不变 ... */
+    let needs_special_handling = {
         let mut has_select = false;
         let mut has_update = false;
         let mut has_conflict = false;
@@ -320,14 +310,13 @@ pub(crate) fn parse_sql_no_quotes(input: TokenStream) -> (Result<(String, Span),
     };
 
     let sql_stream = TokenStream::from_iter(all_tokens);
-    let sql_string_result = syn::parse::Parser::parse(parse_sql, sql_stream);
+    let sql_string_result = Parser::parse(parse_sql, sql_stream);
 
     (sql_string_result, params, first_span)
 }
 
-// 保持 find_complex_parameter_separator 不变
+#[allow(unused_assignments)]
 fn find_complex_parameter_separator(tokens: &[proc_macro::TokenTree]) -> Option<usize> {
-    // ... (保持之前的实现) ...
     let mut paren_depth = 0;
     let mut in_select_clause = false;
     let mut in_update_set_clause = false;
@@ -409,7 +398,7 @@ fn find_complex_parameter_separator(tokens: &[proc_macro::TokenTree]) -> Option<
     None
 }
 
-// process_sql 不再需要 transform_table_names
+// process_sql
 pub(crate) fn process_sql(sql: &str, span: Span) -> std::result::Result<String, TokenStream> {
     // 按分号分割SQL语句
     let statements: Vec<&str> = sql
@@ -457,13 +446,13 @@ pub fn sql_no_quotes(input: TokenStream) -> TokenStream {
         Err(e) => return e.to_compile_error().into(), // 解析失败，返回编译错误
     };
 
-    // 3. 处理 SQL 字符串（验证、格式化） - 注意：不再需要转换表名
-    let validated_sql = match process_sql(&sql_string, span) { // 使用 process_sql_v2
+    // 2. 处理 SQL 字符串（验证、格式化
+    let validated_sql = match process_sql(&sql_string, span) { // 使用 process_sql
         Ok(result) => result,
         Err(error_token_stream) => return error_token_stream, // 返回验证/格式化错误
     };
 
-    // 4. 生成最终代码
+    // 3. 生成最终代码
     let output = if let Some(params) = params_token_stream_opt {
         let sql_lit = LitStr::new(&validated_sql, span); // 使用原始 span
         let params = TokenStream2::from(params);
@@ -478,9 +467,3 @@ pub fn sql_no_quotes(input: TokenStream) -> TokenStream {
 
     output.into()
 }
-
-// --- 结束: 调整后的宏入口和处理流程 ---
-
-// 移除旧的 tokens_to_sql 和 transform_table_names 函数
-// fn tokens_to_sql(...) { ... } // REMOVE
-// fn transform_table_names(...) { ... } // REMOVE
