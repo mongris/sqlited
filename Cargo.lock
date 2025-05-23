@@ -596,7 +596,7 @@ dependencies = [
 
 [[package]]
 name = "sqlited"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "anyhow",
  "bincode",
@@ -618,7 +618,7 @@ dependencies = [
 
 [[package]]
 name = "sqlited-macros"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "proc-macro-error",
  "proc-macro2",
