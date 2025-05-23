@@ -8,11 +8,11 @@ mod tests {
     };
 
     // 定义枚举
-    #[sql_as(int)]
+    #[sql_as(binary)]
     pub enum Axis {
         #[default]
         Horizontal,
-        Vertical,
+        Vertical(i32),
     }
 
     // 定义复杂结构体，用于二进制序列化
@@ -74,7 +74,7 @@ mod tests {
             INSERT INTO test_custom (name, axis) VALUES (?, ?),
             TestCustom {
                 name: "水平测试",
-                axis: Axis::Vertical,
+                axis: Axis::Vertical(1),
             }
         );
         
@@ -89,7 +89,7 @@ mod tests {
         ).unwrap()[0];
         
         assert_eq!(data_name, "水平测试");
-        assert_eq!(*data_axis, Axis::Vertical);
+        assert_eq!(*data_axis, Axis::Vertical(1));
     }
 
     #[test]
@@ -99,7 +99,7 @@ mod tests {
         conn.execute(CustomTypes::create_table_sql().as_str(), []).unwrap();
         
         // 创建测试数据
-        let axis = Axis::Vertical;
+        let axis = Axis::Vertical(1);
         
         let mut layout = Layout(OriginalLayout {
             x: 1,

@@ -279,7 +279,7 @@ pub fn sql_as(attr: TokenStream, input: TokenStream) -> TokenStream {
         Data::Enum(data_enum) => {
 
             // 定义有效的序列化风格
-            let valid_styles = ["string", "int"];
+            let valid_styles = ["json", "binary", "string", "int"];
 
             // 验证风格是否有效
             if !valid_styles.contains(&style_str.as_str()) {
