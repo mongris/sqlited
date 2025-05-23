@@ -93,8 +93,8 @@ pub fn new_memory_pool() -> Result<ConnectionPool> {
 
 /// Helper function to create a new SQLite database connection pool from a file path
 // Update the return type to use the custom Result for PoolError
-pub fn new_file_pool<P: AsRef<Path>>(path: P) -> Result<ConnectionPool> {
-    ConnectionPool::new(path).map_err(SqlitedError::from)
+pub fn new_file_pool<P: AsRef<Path>>(path: P, initialize_pragma: &str) -> Result<ConnectionPool> {
+    ConnectionPool::new(path, initialize_pragma.to_string()).map_err(SqlitedError::from)
 }
 
 /// Helper function to get a connection from a pool

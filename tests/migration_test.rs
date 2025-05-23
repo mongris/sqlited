@@ -5,6 +5,7 @@ use sqlited::{
       prelude::*,
       define_db,
       table,
+      sql_str
   };
 
   // 初始用户表 - 无bio字段
@@ -80,6 +81,13 @@ use sqlited::{
       description: String,
   }
 
+    const DB_INITIALIZE_QUERY: &str = sql_str!(
+        PRAGMA journal_mode=WAL;
+        PRAGMA busy_timeout=1;
+        PRAGMA case_sensitive_like=TRUE;
+        PRAGMA synchronous=NORMAL;
+    );
+
   // 定义初始数据库 - 创建所有初始表结构
   define_db!(
       pub static ref INITIAL_DB: InitialDb<()> = [
@@ -91,7 +99,8 @@ use sqlited::{
           Category,
           Comment,
           Task
-      ]
+      ],
+      DB_INITIALIZE_QUERY
   );
 
   // 初始化数据库并插入一些测试数据

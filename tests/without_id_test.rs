@@ -48,6 +48,13 @@ mod tests {
         age: i32,
     }
 
+    const DB_INITIALIZE_QUERY: &str = sql_str!(
+        PRAGMA journal_mode=WAL;
+        PRAGMA busy_timeout=1;
+        PRAGMA case_sensitive_like=TRUE;
+        PRAGMA synchronous=NORMAL;
+    );
+
     // 使用 define_db 定义测试数据库
     define_db!(
         pub static ref TEST_DB: TestDb<()> = [
@@ -64,7 +71,8 @@ mod tests {
                 data BLOB NOT NULL,
                 metadata TEXT
             )"
-        ]
+        ],
+        DB_INITIALIZE_QUERY
     );
 
     impl TestDb {
@@ -723,7 +731,9 @@ mod tests {
     #[test]
     fn test_multiple_connections() {
         // 使用共享内存数据库
-        let db1 = TEST_DB::shared_memory("test_multi_conn").unwrap();
+        let db1 = TEST_DB::shared_memory("test_multi_conn").inspect_err(|e|
+            eprintln!("Error creating shared memory database: {}", e)
+        ).unwrap();
         
         // 插入测试数据
         db1.execute(

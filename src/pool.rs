@@ -36,8 +36,8 @@ impl ConnectionPool {
     }
 
     /// Create a new SQLite connection pool from a file path
-    pub fn new<P: AsRef<Path>>(path: P) -> Result<Self, PoolError> {
-        let manager = SqliteConnectionManager::file(path);
+    pub fn new<P: AsRef<Path>>(path: P, initialize_pragma: String) -> Result<Self, PoolError> {
+        let manager = SqliteConnectionManager::file(path).with_init(move |c| c.execute_batch(&initialize_pragma));
         let pool = Pool::builder().build(manager)?;
         Ok(Self { inner: pool })
     }

@@ -981,28 +981,27 @@ pub fn get_statement_key(statement: &str) -> String {
 /// ```
 #[macro_export]
 macro_rules! define_db {
-    // 不带泛型参数的版本 - 自动转换为 T<()>
+    // Rule 1: No generics, WITH init query
+    // Delegates to Rule 2 (main implementation with generics)
     (
         pub static ref $id:ident: $t:ident = [
-            $(
-                $element:tt
-            ),* $(,)?
-        ]
+            $( $element:tt ),* $(,)?
+        ],
+        $init_query:expr
     ) => {
-        // 调用带泛型参数的版本，使用 () 作为默认参数
         $crate::define_db!(
             pub static ref $id: $t<()> = [
-                $($element),*
-            ]
+                $( $element ),*
+            ],
+            $init_query
         );
     };
-    // 带自定义类型的版本
+    // Rule 2: With generics, WITH init query (MAIN IMPLEMENTATION)
     (
         pub static ref $id:ident: $t:ident<$($d:ty),*> = [
-            $(
-                $element:tt
-            ),* $(,)?
-        ]
+            $( $element:tt ),* $(,)?
+        ],
+        $init_query:expr // The new optional initial query parameter
     ) => {
         // 定义自定义结构体，包装 Database
         #[derive(Clone)]
@@ -1030,6 +1029,11 @@ macro_rules! define_db {
                 Self {
                     pool,
                 }
+            }
+
+            // Helper method to get the initial query string provided to the macro
+            fn get_initial_query() -> String {
+                String::from($init_query)
             }
 
             // Helper to get a connection (internal use)
@@ -1305,7 +1309,7 @@ macro_rules! define_db {
                             if let Some(existing_pool) = pools.get(&canonical_path) {
                                 existing_pool.clone()
                             } else {
-                                let new_pool = $crate::pool::ConnectionPool::new(&canonical_path)
+                                let new_pool = $crate::pool::ConnectionPool::new(&canonical_path, Database::get_initial_query())
                                     .map(std::sync::Arc::new)
                                     .map_err($crate::error::SqlitedError::from)?; // Use From trait
                                 pools.insert(canonical_path, new_pool.clone());
@@ -1387,6 +1391,36 @@ macro_rules! define_db {
         #[allow(non_upper_case_globals)]
         #[allow(non_camel_case_types)]
         pub type $id = $t;
+    };
+
+    // Rule 3: No generics, NO init query
+    // Delegates to Rule 2, providing an empty string for init_query
+    (
+        pub static ref $id:ident: $t:ident = [
+            $( $element:tt ),* $(,)?
+        ]
+    ) => {
+        $crate::define_db!(
+            pub static ref $id: $t<()> = [
+                $( $element ),*
+            ],
+            "" // Default empty string for init query
+        );
+    };
+
+    // Rule 4: With generics, NO init query
+    // Delegates to Rule 2 (main implementation), providing an empty string for init_query
+    (
+        pub static ref $id:ident: $t:ident<$($d:ty),*> = [
+            $( $element:tt ),* $(,)?
+        ]
+    ) => {
+        $crate::define_db!(
+            pub static ref $id: $t<$($d),*> = [
+                $( $element ),*
+            ],
+            "" // Default empty string for init query
+        );
     };
 }
 
