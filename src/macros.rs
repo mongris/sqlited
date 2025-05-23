@@ -278,6 +278,62 @@ macro_rules! sqld {
         }
     };
 
+    // 
+    (
+        enum_int $enum_type:ident {
+            $($variant:ident => $value:expr),+ $(,)?
+        }
+    ) => {
+        impl $crate::SqliteBindableValue for $enum_type {
+            fn to_sql_value(&self) -> $crate::rq::Result<$crate::rq::types::ToSqlOutput<'_>> {
+                match self {
+                    $(
+                        $enum_type::$variant => Ok($crate::rq::types::ToSqlOutput::from($value as i64)),
+                    )+
+                }
+            }
+            
+            fn from_sql_value(value: $crate::rq::types::ValueRef<'_>) -> Result<Self, $crate::rq::types::FromSqlError> {
+                let val_int = value.as_i64()?;
+                match val_int {
+                    $(
+                        v if v == ($value as i64) => Ok($enum_type::$variant),
+                    )+
+                    _ => Err($crate::rq::types::FromSqlError::Other(Box::new($crate::error::SqlitedError::Error(anyhow::anyhow!(format!("Invalid integer value {} for enum {}", val_int, stringify!($enum_type))))))),
+                }
+            }
+            
+            fn sqlite_type_name() -> &'static str {
+                "INTEGER"
+            }
+        }
+
+        // 直接实现 ToSql 特征
+        impl $crate::rq::ToSql for $enum_type {
+            fn to_sql(&self) -> $crate::rq::Result<$crate::rq::types::ToSqlOutput<'_>> {
+                self.to_sql_value()
+            }
+        }
+        
+        // 直接实现 FromSql 特征
+        impl $crate::rq::types::FromSql for $enum_type {
+            fn column_result(value: $crate::rq::types::ValueRef<'_>) -> Result<Self, $crate::rq::types::FromSqlError> {
+                Self::from_sql_value(value)
+            }
+        }
+        
+        // 实现 SqliteTypeName
+        impl $crate::macros::SqliteTypeName for $enum_type {
+            fn sql_type_name() -> &'static str {
+                "INTEGER"
+            }
+            // 枚举映射为整数通常不作为自增主键
+            fn is_integer_type() -> bool {
+                false 
+            }
+        }
+    };
+
     // 二进制序列化 (使用 bincode)
     (
         binary $type:ty

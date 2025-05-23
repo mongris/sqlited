@@ -24,9 +24,8 @@ struct VariantAttribute {
     ident: syn::Ident,
     custom_value: Option<String>,
 }
-
-// 从变体属性中提取 sql_as_value
-fn extract_sql_as_value(variant: &Variant) -> Option<String> {
+// 从变体属性中提取 sql_as_value (用于 string 风格)
+fn extract_sql_as_string_value(variant: &Variant) -> Option<String> {
     for attr in &variant.attrs {
         if attr.path().is_ident("sql_as_value") {
             match &attr.meta {
@@ -42,15 +41,38 @@ fn extract_sql_as_value(variant: &Variant) -> Option<String> {
     None
 }
 
-// 处理枚举所有变体的属性
-fn process_enum_variants(
+// 新增：从变体属性中提取 sql_as_value (用于 int 风格)
+fn extract_sql_as_int_literal(variant: &Variant) -> std::result::Result<Option<syn::LitInt>, syn::Error> {
+    for attr in &variant.attrs {
+        if attr.path().is_ident("sql_as_value") {
+            match &attr.meta {
+                Meta::List(list) => {
+                    // 尝试解析为 LitInt
+                    if let Ok(lit_int) = list.parse_args::<syn::LitInt>() {
+                        return Ok(Some(lit_int));
+                    }
+                    // 如果不是 LitInt，但属性存在，则报错
+                    let parsed_lit_for_error = list.parse_args::<syn::Lit>()?;
+                    return Err(syn::Error::new(parsed_lit_for_error.span(), "Expected an integer literal for sql_as_value when using int style"));
+                }
+                _ => { // 例如 #[sql_as_value = 123]
+                    return Err(syn::Error::new(attr.meta.path().get_ident().unwrap().span(), "Expected #[sql_as_value(...)] format for integer values"));
+                }
+            }
+        }
+    }
+    Ok(None)
+}
+
+// 处理枚举所有变体的属性 (用于 string 风格)
+fn process_enum_variants_for_string_style(
     variants: &syn::punctuated::Punctuated<Variant, syn::token::Comma>,
 ) -> Vec<VariantAttribute> {
     variants
         .iter()
         .map(|variant| {
             let ident = variant.ident.clone();
-            let custom_value = extract_sql_as_value(variant);
+            let custom_value = extract_sql_as_string_value(variant);
 
             VariantAttribute {
                 ident,
@@ -64,33 +86,9 @@ pub fn sql_as(attr: TokenStream, input: TokenStream) -> TokenStream {
     // 解析属性参数
     let args = parse_macro_input!(attr as SqlAsArgs);
 
-    // 获取序列化风格（json, binary, string）
+    // 获取序列化风格(json, binary, string, int)
     let style = &args.style;
     let style_str = style.to_string();
-
-    // 定义有效的序列化风格
-    let valid_styles = ["json", "binary", "string"];
-
-    // 验证风格是否有效
-    if !valid_styles.contains(&style_str.as_str()) {
-        let suggestion = find_closest_match(&style_str, &valid_styles);
-        let error_msg = if let Some(suggested) = suggestion {
-            format!(
-                "Invalid serialization style '{}'. Did you mean '{}'?",
-                style_str, suggested
-            )
-        } else {
-            format!(
-                "Invalid serialization style '{}'. Valid styles are: {}",
-                style_str,
-                valid_styles.join(", ")
-            )
-        };
-
-        return syn::Error::new(style.span(), error_msg)
-            .to_compile_error()
-            .into();
-    }
 
     // 解析输入为 DeriveInput
     let input = parse_macro_input!(input as DeriveInput);
@@ -102,6 +100,31 @@ pub fn sql_as(attr: TokenStream, input: TokenStream) -> TokenStream {
 
     match &input.data {
         Data::Struct(data_struct) => {
+
+            // 定义有效的序列化风格
+            let valid_styles = ["json", "binary"];
+
+            // 验证风格是否有效
+            if !valid_styles.contains(&style_str.as_str()) {
+                let suggestion = find_closest_match(&style_str, &valid_styles);
+                let error_msg = if let Some(suggested) = suggestion {
+                    format!(
+                        "Invalid serialization style '{}'. Did you mean '{}'?",
+                        style_str, suggested
+                    )
+                } else {
+                    format!(
+                        "Invalid serialization style '{}'. Valid styles are: {}",
+                        style_str,
+                        valid_styles.join(", ")
+                    )
+                };
+
+                return syn::Error::new(style.span(), error_msg)
+                    .to_compile_error()
+                    .into();
+            }
+
             // 从原始结构体中获取字段
             let fields = &data_struct.fields;
 
@@ -254,11 +277,40 @@ pub fn sql_as(attr: TokenStream, input: TokenStream) -> TokenStream {
         }
 
         Data::Enum(data_enum) => {
+
+            // 定义有效的序列化风格
+            let valid_styles = ["string", "int"];
+
+            // 验证风格是否有效
+            if !valid_styles.contains(&style_str.as_str()) {
+                let suggestion = find_closest_match(&style_str, &valid_styles);
+                let error_msg = if let Some(suggested) = suggestion {
+                    format!(
+                        "Invalid serialization style '{}'. Did you mean '{}'?",
+                        style_str, suggested
+                    )
+                } else {
+                    format!(
+                        "Invalid serialization style '{}'. Valid styles are: {}",
+                        style_str,
+                        valid_styles.join(", ")
+                    )
+                };
+
+                return syn::Error::new(style.span(), error_msg)
+                    .to_compile_error()
+                    .into();
+            }
+
+            // 保留原始枚举属性（除了sql_as本身）
+            // let enum_attrs = input
+            //     .attrs
+            //     .iter()
+            //     .filter(|attr| !attr.path().is_ident("sql_as"))
+            //     .collect::<Vec<_>>();
+
             // 获取枚举变体
             let variants = &data_enum.variants;
-
-            // 处理枚举变体属性
-            let variant_attributes = process_enum_variants(variants);
 
             // 重建枚举变体，保留原始属性
             let variant_definitions = variants.iter().map(|v| {
@@ -325,6 +377,8 @@ pub fn sql_as(attr: TokenStream, input: TokenStream) -> TokenStream {
             // 特别处理 "string" 风格的枚举
             if style_str == "string" {
                 // 生成字符串序列化的变体映射
+                let variant_attributes = process_enum_variants_for_string_style(variants); // 修改调用
+
                 let variant_mappings = variant_attributes.iter().map(|variant_attr| {
                     let variant_name = &variant_attr.ident;
                     let value = variant_attr
@@ -352,6 +406,55 @@ pub fn sql_as(attr: TokenStream, input: TokenStream) -> TokenStream {
                     );
                 };
 
+                expanded.into()
+            } else if style_str == "int" { // 新增对 "int" 风格的处理
+                let mut variant_mappings_for_int = Vec::new();
+                let mut next_implicit_value: i64 = 0;
+
+                for variant in variants {
+                    let variant_name = &variant.ident;
+                    let current_value_literal: proc_macro2::Literal;
+
+                    match extract_sql_as_int_literal(variant) {
+                        Ok(Some(lit_int)) => {
+                            match lit_int.base10_parse::<i64>() {
+                                Ok(val) => {
+                                    current_value_literal = proc_macro2::Literal::i64_unsuffixed(val);
+                                    next_implicit_value = val + 1;
+                                }
+                                Err(e) => {
+                                    return syn::Error::new(lit_int.span(), format!("Invalid integer in sql_as_value: {}", e))
+                                        .to_compile_error()
+                                        .into();
+                                }
+                            }
+                        }
+                        Ok(None) => {
+                            // 没有 sql_as_value，使用隐式值
+                            current_value_literal = proc_macro2::Literal::i64_unsuffixed(next_implicit_value);
+                            next_implicit_value += 1;
+                        }
+                        Err(e) => {
+                            return e.to_compile_error().into();
+                        }
+                    }
+                    variant_mappings_for_int.push(quote! { #variant_name => #current_value_literal });
+                }
+
+                let expanded = quote! {
+                    #(#enum_attrs)*
+                    // 对于 int 枚举，Default, Serialize, Deserialize 可能需要用户根据具体情况调整或自定义
+                    #[derive(Default, Copy, Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+                    #vis enum #type_name #generics {
+                        #(#variant_definitions),*
+                    }
+
+                    sqlited::sqld!(
+                        enum_int #type_name { // 使用 "enum_int" 作为新的关键字
+                            #(#variant_mappings_for_int),*
+                        }
+                    );
+                };
                 expanded.into()
             } else {
                 // 对于 json 和 binary，使用标准方法

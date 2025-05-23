@@ -8,7 +8,7 @@ mod tests {
     };
 
     // 定义枚举
-    #[sql_as(string)]
+    #[sql_as(int)]
     pub enum Axis {
         #[default]
         Horizontal,
