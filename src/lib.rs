@@ -42,6 +42,7 @@ pub mod prelude {
     pub use crate::types::*;
     pub use crate::row::*;
     pub use crate::connection::*;
+    pub use crate::{ToSql, FromSql, FromSqlError};
 }
 
 pub use prelude::*;

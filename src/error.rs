@@ -15,6 +15,13 @@ pub enum SqlitedError {
     #[error("Connection pool creation error: {0}")]
     AsyncJoinError(String), // Add this variant for async join errors
 
+    
+    #[error("Parameter to SQL conversion error: {0}")]
+    ToSqlConversionError(Box<dyn std::error::Error + Send + Sync + 'static>),
+
+    #[error("SQL to Rust conversion error: {0}")]
+    FromSqlConversionError(Box<dyn std::error::Error + Send + Sync + 'static>),
+
     // You could potentially still include your original PoolError if needed for creation errors,
     // but mapping r2d2::Error directly is often sufficient for get() errors.
     // #[error("Pool creation error: {0}")]
