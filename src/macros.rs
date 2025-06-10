@@ -207,6 +207,12 @@ impl SqliteTypeName for String {
     }
 }
 
+impl SqliteTypeName for solana_pubkey::Pubkey {
+    fn sql_type_name() -> &'static str {
+        "TEXT"
+    }
+}
+
 impl<T> SqliteTypeName for Option<T>
 where
     T: SqliteTypeName,
