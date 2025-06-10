@@ -45,7 +45,8 @@ mod tests {
         name: String,
         axis: Axis,
         layout: Layout,
-        config: Config
+        config: Config,
+        tags: Option<Vec<String>>, // 可选字段，存储字符串数组
     }
 
     // 定义测试表

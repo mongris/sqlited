@@ -490,13 +490,13 @@ fn generate_from_row_method(
     quote! {
         impl #struct_name {
             /// Create a new instance from a database row
-            pub fn from_row(row: &sqlited::rq::Row) -> sqlited::rq::Result<Self> {
+            pub fn from_row(row: &sqlited::Row) -> sqlited::rq::Result<Self> {
                 Ok(Self {
                     #(#field_extractions),*
                 })
             }
 
-            pub fn from_rows(rows: &[sqlited::rq::Row]) -> sqlited::rq::Result<Vec<Self>> {
+            pub fn from_rows(rows: &[sqlited::Row]) -> sqlited::rq::Result<Vec<Self>> {
                 rows.iter().map(Self::from_row).collect()
             }
         }
@@ -1033,7 +1033,7 @@ fn get_sql_type(ty: &syn::Type) -> String {
         "REAL".to_string()
     } else if type_str.contains("bool") {
         "INTEGER".to_string() // SQLite没有布尔类型，使用INTEGER
-    } else if type_str.contains("Vec<u8>") || type_str.contains("&[u8]") {
+    } else if type_str.contains("Vec<String>") || type_str.contains("Vec<u8>") || type_str.contains("&[u8]") {
         "BLOB".to_string()
     } else if type_str.contains("UtcDateTime") {
         "TEXT".to_string() // 日期时间类型存储为TEXT

@@ -43,33 +43,28 @@ impl SqlQuery {
     /// Query multiple rows and map each to a value using the provided function
     pub fn query_map<T, F>(&self, conn: &SqliteConnection, f: F) -> Result<Vec<T>>
     where
-        F: FnMut(&crate::rq::Row<'_>) -> crate::rq::Result<T>,
+        F: FnMut(&crate::Row<'_>) -> crate::rq::Result<T>,
     {
-        let mut stmt = conn.raw_connection().prepare(&self.query)?;
-        let param_refs: Vec<&dyn crate::rq::ToSql> = self
-            .params
-            .iter()
-            .map(|p| p.as_ref() as &dyn crate::rq::ToSql)
-            .collect();        
-        // query_map returns $crate::rq::Result, ? converts it to SqlitedError via From
-        let rows = stmt.query_map(param_refs.as_slice(), f)?;
-        // collect returns $crate::rq::Result<Vec<T>>, map_err converts the error via From
-        // Add turbofish annotation to help type inference
-        rows.collect::<crate::rq::Result<Vec<T>>>().map_err(SqlitedError::from)
-    }
-
-    /// Query a single row and map it to a value using the provided function
-    pub fn query_row<T, F>(&self, conn: &SqliteConnection, f: F) -> Result<T>
-    where
-        F: FnOnce(&crate::rq::Row<'_>) -> crate::rq::Result<T>,
-    {
-        let mut stmt = conn.raw_connection().prepare(&self.query)?;
         let param_refs: Vec<&dyn crate::rq::ToSql> = self
             .params
             .iter()
             .map(|p| p.as_ref() as &dyn crate::rq::ToSql)
             .collect();
-        stmt.query_row(param_refs.as_slice(), f).map_err(SqlitedError::from)
+        conn.query(&self.query, param_refs.as_slice(), f)
+            .map_err(SqlitedError::from)
+    }
+
+    /// Query a single row and map it to a value using the provided function
+    pub fn query_row<T, F>(&self, conn: &SqliteConnection, f: F) -> Result<T>
+    where
+        F: FnOnce(&crate::Row<'_>) -> crate::rq::Result<T>,
+    {
+        let param_refs: Vec<&dyn crate::rq::ToSql> = self
+            .params
+            .iter()
+            .map(|p| p.as_ref() as &dyn crate::rq::ToSql)
+            .collect();
+        conn.query_row(&self.query, param_refs.as_slice(), f)
     }
 }
 
@@ -105,6 +100,12 @@ impl SqliteTypeName for i32 {
 
     fn is_integer_type() -> bool {
         true
+    }
+}
+
+impl SqliteTypeName for Vec<String> {
+    fn sql_type_name() -> &'static str {
+        "BLOB"
     }
 }
 
@@ -254,19 +255,37 @@ macro_rules! sqld {
                     }
                 })
             }
+
+            fn sqlite_type_name() -> &'static str {
+                "TEXT"
+            }
         }
 
-        // 直接实现 ToSql 特征
-        impl $crate::rq::ToSql for $enum_type {
+        // 实现自定义的 sqlited::ToSql 特征
+        impl $crate::ToSql for $enum_type {
             fn to_sql(&self) -> $crate::rq::Result<$crate::rq::types::ToSqlOutput<'_>> {
                 self.to_sql_value()
             }
+
+            fn sql_type(&self) -> $crate::rq::types::Type {
+                match <Self as $crate::SqliteBindableValue>::sqlite_type_name() {
+                    "TEXT" => $crate::rq::types::Type::Text,
+                    "INTEGER" => $crate::rq::types::Type::Integer,
+                    "REAL" => $crate::rq::types::Type::Real,
+                    "BLOB" => $crate::rq::types::Type::Blob,
+                    unknown_type => panic!(
+                        "从 SqliteBindableValue 获取到不支持的 SQLite 类型名称 '{}' (用于类型 {})",
+                        unknown_type,
+                        stringify!($enum_type)
+                    ),
+                }
+            }
         }
         
-        // 直接实现 FromSql 特征
-        impl $crate::rq::types::FromSql for $enum_type {
-            fn column_result(value: $crate::rq::types::ValueRef<'_>) -> Result<Self, $crate::rq::types::FromSqlError> {
-                Self::from_sql_value(value)
+        // 实现自定义的 sqlited::FromSql 特征
+        impl $crate::FromSql for $enum_type {
+            fn from_sql(value: $crate::rq::types::ValueRef<'_>) -> std::result::Result<Self, $crate::FromSqlError> {
+                Self::from_sql_value(value).map_err(Into::into)
             }
         }
         
@@ -278,7 +297,7 @@ macro_rules! sqld {
         }
     };
 
-    // 
+    // enum_int $enum_type:ident { ... }
     (
         enum_int $enum_type:ident {
             $($variant:ident => $value:expr),+ $(,)?
@@ -308,17 +327,31 @@ macro_rules! sqld {
             }
         }
 
-        // 直接实现 ToSql 特征
-        impl $crate::rq::ToSql for $enum_type {
+        // 实现自定义的 sqlited::ToSql 特征
+        impl $crate::ToSql for $enum_type {
             fn to_sql(&self) -> $crate::rq::Result<$crate::rq::types::ToSqlOutput<'_>> {
                 self.to_sql_value()
             }
+
+            fn sql_type(&self) -> $crate::rq::types::Type {
+                match <Self as $crate::SqliteBindableValue>::sqlite_type_name() {
+                    "TEXT" => $crate::rq::types::Type::Text,
+                    "INTEGER" => $crate::rq::types::Type::Integer,
+                    "REAL" => $crate::rq::types::Type::Real,
+                    "BLOB" => $crate::rq::types::Type::Blob,
+                    unknown_type => panic!(
+                        "从 SqliteBindableValue 获取到不支持的 SQLite 类型名称 '{}' (用于类型 {})",
+                        unknown_type,
+                        stringify!($enum_type)
+                    ),
+                }
+            }
         }
         
-        // 直接实现 FromSql 特征
-        impl $crate::rq::types::FromSql for $enum_type {
-            fn column_result(value: $crate::rq::types::ValueRef<'_>) -> Result<Self, $crate::rq::types::FromSqlError> {
-                Self::from_sql_value(value)
+        // 实现自定义的 sqlited::FromSql 特征
+        impl $crate::FromSql for $enum_type {
+            fn from_sql(value: $crate::rq::types::ValueRef<'_>) -> std::result::Result<Self, $crate::FromSqlError> {
+                Self::from_sql_value(value).map_err(Into::into)
             }
         }
         
@@ -327,7 +360,6 @@ macro_rules! sqld {
             fn sql_type_name() -> &'static str {
                 "INTEGER"
             }
-            // 枚举映射为整数通常不作为自增主键
             fn is_integer_type() -> bool {
                 false 
             }
@@ -365,24 +397,38 @@ macro_rules! sqld {
             }
         }
         
-        // 直接实现 ToSql 特征
-        impl $crate::rq::ToSql for $type {
+        // 实现自定义的 sqlited::ToSql 特征
+        impl $crate::ToSql for $type {
             fn to_sql(&self) -> $crate::rq::Result<$crate::rq::types::ToSqlOutput<'_>> {
                 self.to_sql_value()
             }
+
+            fn sql_type(&self) -> $crate::rq::types::Type {
+                match <Self as $crate::SqliteBindableValue>::sqlite_type_name() {
+                    "TEXT" => $crate::rq::types::Type::Text,
+                    "INTEGER" => $crate::rq::types::Type::Integer,
+                    "REAL" => $crate::rq::types::Type::Real,
+                    "BLOB" => $crate::rq::types::Type::Blob,
+                    unknown_type => panic!(
+                        "从 SqliteBindableValue 获取到不支持的 SQLite 类型名称 '{}' (用于类型 {})",
+                        unknown_type,
+                        stringify!($type)
+                    ),
+                }
+            }
         }
         
-        // 直接实现 FromSql 特征
-        impl $crate::rq::types::FromSql for $type {
-            fn column_result(value: $crate::rq::types::ValueRef<'_>) -> Result<Self, $crate::rq::types::FromSqlError> {
-                Self::from_sql_value(value)
+        // 实现自定义的 sqlited::FromSql 特征
+        impl $crate::FromSql for $type {
+            fn from_sql(value: $crate::rq::types::ValueRef<'_>) -> std::result::Result<Self, $crate::FromSqlError> {
+                Self::from_sql_value(value).map_err(Into::into)
             }
         }
         
         // 实现 SqliteTypeName
         impl $crate::macros::SqliteTypeName for $type {
             fn sql_type_name() -> &'static str {
-                "BLOB" // 使用 BLOB 类型存储二进制数据
+                "BLOB"
             }
         }
     };
@@ -393,7 +439,6 @@ macro_rules! sqld {
     ) => {
         impl $crate::SqliteBindableValue for $type {
             fn to_sql_value(&self) -> $crate::rq::Result<$crate::rq::types::ToSqlOutput<'_>> {
-                // 使用 serde_json 序列化为字符串
                 match serde_json::to_string(&self) {
                     Ok(json) => Ok($crate::rq::types::ToSqlOutput::from(json)),
                     Err(err) => Err($crate::rq::Error::ToSqlConversionFailure(
@@ -413,19 +458,37 @@ macro_rules! sqld {
                     }
                 })
             }
-        }
-        
-        // 直接实现 ToSql 特征
-        impl $crate::rq::ToSql for $type {
-            fn to_sql(&self) -> $crate::rq::Result<$crate::rq::types::ToSqlOutput<'_>> {
-                self.to_sql_value()
+
+            fn sqlite_type_name() -> &'static str {
+                "TEXT"
             }
         }
         
-        // 直接实现 FromSql 特征
-        impl $crate::rq::types::FromSql for $type {
-            fn column_result(value: $crate::rq::types::ValueRef<'_>) -> Result<Self, $crate::rq::types::FromSqlError> {
-                Self::from_sql_value(value)
+        // 实现自定义的 sqlited::ToSql 特征
+        impl $crate::ToSql for $type {
+            fn to_sql(&self) -> $crate::rq::Result<$crate::rq::types::ToSqlOutput<'_>> {
+                self.to_sql_value()
+            }
+
+            fn sql_type(&self) -> $crate::rq::types::Type {
+                match <Self as $crate::SqliteBindableValue>::sqlite_type_name() {
+                    "TEXT" => $crate::rq::types::Type::Text,
+                    "INTEGER" => $crate::rq::types::Type::Integer,
+                    "REAL" => $crate::rq::types::Type::Real,
+                    "BLOB" => $crate::rq::types::Type::Blob,
+                    unknown_type => panic!(
+                        "从 SqliteBindableValue 获取到不支持的 SQLite 类型名称 '{}' (用于类型 {})",
+                        unknown_type,
+                        stringify!($type)
+                    ),
+                }
+            }
+        }
+        
+        // 实现自定义的 sqlited::FromSql 特征
+        impl $crate::FromSql for $type {
+            fn from_sql(value: $crate::rq::types::ValueRef<'_>) -> std::result::Result<Self, $crate::FromSqlError> {
+                Self::from_sql_value(value).map_err(Into::into)
             }
         }
         
@@ -437,7 +500,7 @@ macro_rules! sqld {
         }
     };
 
-    // 二进制序列化 (使用 jsonb)
+    // jsonb $type:ty
     (
         jsonb $type:ty
     ) => {
@@ -468,24 +531,38 @@ macro_rules! sqld {
             }
         }
         
-        // 直接实现 ToSql 特征
-        impl $crate::rq::ToSql for $type {
+        // 实现自定义的 sqlited::ToSql 特征
+        impl $crate::ToSql for $type {
             fn to_sql(&self) -> $crate::rq::Result<$crate::rq::types::ToSqlOutput<'_>> {
                 self.to_sql_value()
             }
-        }
-        
-        // 直接实现 FromSql 特征
-        impl $crate::rq::types::FromSql for $type {
-            fn column_result(value: $crate::rq::types::ValueRef<'_>) -> Result<Self, $crate::rq::types::FromSqlError> {
-                Self::from_sql_value(value)
+
+            fn sql_type(&self) -> $crate::rq::types::Type {
+                match <Self as $crate::SqliteBindableValue>::sqlite_type_name() {
+                    "TEXT" => $crate::rq::types::Type::Text,
+                    "INTEGER" => $crate::rq::types::Type::Integer,
+                    "REAL" => $crate::rq::types::Type::Real,
+                    "BLOB" => $crate::rq::types::Type::Blob,
+                    unknown_type => panic!(
+                        "从 SqliteBindableValue 获取到不支持的 SQLite 类型名称 '{}' (用于类型 {})",
+                        unknown_type,
+                        stringify!($type)
+                    ),
+                }
             }
         }
         
-        // 实现 SqliteTypeName
+        // 实现自定义的 sqlited::FromSql 特征
+        impl $crate::FromSql for $type {
+            fn from_sql(value: $crate::rq::types::ValueRef<'_>) -> std::result::Result<Self, $crate::FromSqlError> {
+                Self::from_sql_value(value).map_err(Into::into)
+            }
+        }
+        
+        // 实现 SqliteTypeName (保持不变)
         impl $crate::macros::SqliteTypeName for $type {
             fn sql_type_name() -> &'static str {
-                "BLOB" // 使用 BLOB 类型存储二进制数据
+                "BLOB"
             }
         }
     };
@@ -510,7 +587,7 @@ pub trait SqliteBindableValue {
     fn to_sql_value(&self) -> crate::rq::Result<crate::rq::types::ToSqlOutput<'_>>;
     
     /// 从 SQLite 值转换为此类型
-    fn from_sql_value(value: crate::rq::types::ValueRef<'_>) -> crate::rq::Result<Self, crate::rq::types::FromSqlError> where Self: Sized;
+    fn from_sql_value(value: crate::rq::types::ValueRef<'_>) -> anyhow::Result<Self, crate::rq::types::FromSqlError> where Self: Sized;
     
     /// 返回此类型在 SQLite 中的类型名称
     fn sqlite_type_name() -> &'static str {
@@ -528,17 +605,35 @@ impl<T: SqliteBindableValue + Default + Clone + std::fmt::Debug> Default for Sql
     }
 }
 
-// 为包装器类型实现 FromSql
-impl<T: SqliteBindableValue + Default + Clone + std::fmt::Debug> crate::rq::types::FromSql for SqliteCustomType<T> {
-    fn column_result(value: crate::rq::types::ValueRef<'_>) -> crate::rq::Result<Self, crate::rq::types::FromSqlError> {
-        T::from_sql_value(value).map(SqliteCustomType)
+// 为包装器类型实现自定义的 sqlited::FromSql 特征
+impl<T: SqliteBindableValue + Default + Clone + std::fmt::Debug> crate::FromSql for SqliteCustomType<T> {
+    fn from_sql(value: crate::rq::types::ValueRef<'_>) -> std::result::Result<Self, crate::FromSqlError> {
+        T::from_sql_value(value)
+            .map(SqliteCustomType) // 包装 T 为 SqliteCustomType<T>
+            .map_err(Into::into)
     }
 }
 
-// 为包装器类型实现 ToSql
-impl<T: SqliteBindableValue + Default + Clone + std::fmt::Debug> crate::rq::ToSql for SqliteCustomType<T> {
+// 为包装器类型实现自定义的 sqlited::ToSql 特征
+impl<T: SqliteBindableValue + Default + Clone + std::fmt::Debug> crate::ToSql for SqliteCustomType<T> {
     fn to_sql(&self) -> crate::rq::Result<crate::rq::types::ToSqlOutput<'_>> {
+        // T::to_sql_value() 已经返回 crate::rq::Result<crate::rq::types::ToSqlOutput<'_>>
         self.0.to_sql_value()
+    }
+
+    fn sql_type(&self) -> crate::rq::types::Type {
+        // 使用 T 实现的 SqliteBindableValue::sqlite_type_name() 进行映射
+        match T::sqlite_type_name() {
+            "TEXT" => crate::rq::types::Type::Text,
+            "INTEGER" => crate::rq::types::Type::Integer,
+            "REAL" => crate::rq::types::Type::Real,
+            "BLOB" => crate::rq::types::Type::Blob,
+            unknown_type => panic!(
+                "从 SqliteBindableValue (通过 SqliteCustomType<{}>) 获取到不支持的 SQLite 类型名称 '{}'",
+                std::any::type_name::<T>(),
+                unknown_type
+            ),
+        }
     }
 }
 
@@ -547,11 +642,41 @@ impl<T: SqliteBindableValue + Default + Clone + std::fmt::Debug> crate::macros::
     fn sql_type_name() -> &'static str {
         T::sqlite_type_name()
     }
+
+    fn is_integer_type() -> bool {
+        // 假设 SqliteBindableValue 的实现者也会考虑其包装类型的整数性质
+        // 如果 T 是整数类型，那么 SqliteCustomType<T> 也应被视为整数类型
+        // 为了准确性，这里可以考虑为 SqliteBindableValue 添加 is_integer_type 方法
+        // 但如果 SqliteCustomType 主要用于复杂类型，默认为 false 可能更安全
+        // 或者，如果 T 实现了 SqliteTypeName，则可以委托给 T::is_integer_type()
+        // 鉴于 SqliteBindableValue 目前没有 is_integer_type, 我们需要做一个决定。
+        // 选项1: 默认为 false
+        // false
+        // 选项2: 尝试要求 T 实现 SqliteTypeName (这会增加约束)
+        // T::is_integer_type() // 如果 T: SqliteTypeName
+        // 选项3: 为 SqliteBindableValue 添加 is_integer_type()
+        // T::is_integer_type() // 如果 SqliteBindableValue 有 is_integer_type
+        // 当前 SqliteTypeName 已有 is_integer_type, 但 SqliteBindableValue 没有。
+        // 如果 T 总是也实现了 SqliteTypeName (例如通过 sqld! 宏)，则可以这样做：
+        // (需要 T: SqliteBindableValue + SqliteTypeName + ...)
+        // 为了简单起见，并与 SqliteTypeName for Option<T> 行为一致，
+        // 如果 T 自身能提供这个信息是最好的。
+        // 假设通过 sqld! 宏生成的类型会同时实现 SqliteBindableValue 和 SqliteTypeName。
+        // 对于手动实现 SqliteBindableValue 的类型，用户也应考虑实现 SqliteTypeName。
+        // 因此，这里可以尝试调用 T::is_integer_type()，但这需要 T: SqliteTypeName 约束。
+        // 鉴于 SqliteCustomType<T> 的 T 约束目前只有 SqliteBindableValue，
+        // 我们不能直接调用 T::is_integer_type()。
+        // 一个折中的办法是，如果 T::sqlite_type_name() 是 "INTEGER"，则返回 true。
+        match T::sqlite_type_name() {
+            "INTEGER" => true,
+            _ => false,
+        }
+    }
 }
 
 /// 通用的 WithoutId 结构体，用于自增 ID 表的插入操作
 pub struct WithoutId<T> {
-    pub inner: std::collections::HashMap<String, Box<dyn crate::rq::ToSql>>,
+    pub inner: std::collections::HashMap<String, Box<dyn crate::ToSql>>,
     _marker: std::marker::PhantomData<T>,
 }
 
@@ -576,7 +701,7 @@ impl<T: 'static> Clone for WithoutId<T> {
             // Option<String> 实现了 ToSql，并且 None 会被视为 NULL
             result.inner.insert(
                 key.clone(),
-                Box::new(Option::<String>::None) as Box<dyn crate::rq::ToSql>,
+                Box::new(Option::<String>::None) as Box<dyn crate::ToSql>,
             );
         }
 
@@ -594,28 +719,28 @@ impl<T> WithoutId<T> {
     }
 
     /// 设置字段值
-    pub fn set<V: crate::rq::ToSql + 'static>(&mut self, field: &str, value: V) -> &mut Self {
+    pub fn set<V: crate::ToSql + 'static>(&mut self, field: &str, value: V) -> &mut Self {
         self.inner.insert(field.to_lowercase(), Box::new(value));
         self
     }
 
     /// 获取此结构体中的参数列表，按照给定的字段名顺序
-    pub fn to_params_ordered(&self, field_names: &[String]) -> Vec<&dyn crate::rq::ToSql> {
+    pub fn to_params_ordered(&self, field_names: &[String]) -> Vec<&dyn crate::ToSql> {
         field_names
             .iter()
             .filter_map(|name| {
                 self.inner
                     .get(name)
-                    .map(|v| v.as_ref() as &dyn crate::rq::ToSql)
+                    .map(|v| v.as_ref() as &dyn crate::ToSql)
             })
             .collect()
     }
 
     /// 获取此结构体中的参数列表（无序）
-    pub fn to_params(&self) -> Vec<&dyn crate::rq::ToSql> {
+    pub fn to_params(&self) -> Vec<&dyn crate::ToSql> {
         self.inner
             .values()
-            .map(|v| v.as_ref() as &dyn crate::rq::ToSql)
+            .map(|v| v.as_ref() as &dyn crate::ToSql)
             .collect()
     }
 
@@ -625,14 +750,14 @@ impl<T> WithoutId<T> {
     }
 
     /// 获取字段值（如果存在）
-    pub fn get_field(&self, field_name: &str) -> Option<&dyn crate::rq::ToSql> {
+    pub fn get_field(&self, field_name: &str) -> Option<&dyn crate::ToSql> {
         self.inner
             .get(&field_name.to_lowercase())
-            .map(|v| v.as_ref() as &dyn crate::rq::ToSql)
+            .map(|v| v.as_ref() as &dyn crate::ToSql)
     }
 
     /// 获取用于插入的参数（自动处理 NULL 值）
-    pub fn params_for_insert<M>(&self) -> Vec<&dyn crate::rq::ToSql>
+    pub fn params_for_insert<M>(&self) -> Vec<&dyn crate::ToSql>
     where
         M: WithoutIdTableInfo,
     {
@@ -641,10 +766,10 @@ impl<T> WithoutId<T> {
 
         for field_name in field_names {
             if let Some(value) = self.inner.get(&field_name.to_lowercase()) {
-                params.push(value.as_ref() as &dyn crate::rq::ToSql);
+                params.push(value.as_ref() as &dyn crate::ToSql);
             } else {
                 // 对于缺失的字段，使用 NULL
-                params.push(&None::<String> as &dyn crate::rq::ToSql);
+                params.push(&None::<String> as &dyn crate::ToSql);
             }
         }
 
@@ -1167,7 +1292,7 @@ macro_rules! define_db {
             /// Execute a raw SQL query and return the rows as a statement
             pub fn query<F, T, P: $crate::rq::Params>(&self, query: &str, params: P, map_fn: F) -> $crate::error::Result<Vec<T>>
             where
-                F: FnMut(&$crate::rq::Row) -> $crate::rq::Result<T>,
+                F: FnMut(&$crate::Row) -> $crate::rq::Result<T>,
             {
                 let conn = self.get_conn()?;
                 conn.query(query, params, map_fn)
@@ -1177,7 +1302,7 @@ macro_rules! define_db {
             pub fn query_row<P, F, T>(&self, sql: &str, params: P, f: F) -> $crate::error::Result<T>
             where
                 P: $crate::rq::Params,
-                F: FnOnce(&$crate::rq::Row<'_>) -> $crate::rq::Result<T>,
+                F: FnOnce(&$crate::Row<'_>) -> $crate::rq::Result<T>,
             {
                 let conn = self.get_conn()?;
                 conn.query_row(sql, params, f)

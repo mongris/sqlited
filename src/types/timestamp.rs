@@ -1,8 +1,15 @@
 use std::ops::{Deref, DerefMut};
 
 use chrono::{DateTime, Utc};
-use rusqlite::types::{FromSql, FromSqlError, ToSqlOutput, ValueRef};
-use crate::{SqliteBindableValue, SqliteTypeName};
+use rusqlite::types::{ToSqlOutput, ValueRef};
+use crate::{
+    SqliteBindableValue, 
+    SqliteTypeName, 
+    ToSql,                  // Use crate::ToSql
+    FromSql,                // Use crate::FromSql
+    FromSqlError as SqlitedFromSqlError // Use crate::FromSqlError
+};
+use rusqlite::types::FromSqlError as RusqliteFromSqlError; // For SqliteBindableValue
 
 // New wrapper type for DateTime<Utc>
 #[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -45,12 +52,12 @@ impl SqliteBindableValue for Timestamp {
         Ok(ToSqlOutput::from(self.timestamp()))
     }
 
-    fn from_sql_value(value: ValueRef<'_>) -> Result<Self, FromSqlError> {
+    fn from_sql_value(value: ValueRef<'_>) -> Result<Self, RusqliteFromSqlError> { // Returns RusqliteFromSqlError
         let timestamp = match value.as_i64() {
             Ok(ts) => ts,
             Err(e) => {
                 log::error!("Failed to convert value to i64: {:?}", e);
-                return Err(FromSqlError::InvalidType);
+                return Err(RusqliteFromSqlError::InvalidType);
             }
         };
         
@@ -60,29 +67,38 @@ impl SqliteBindableValue for Timestamp {
         }
         
         // 尝试毫秒级 timestamp
+        // Note: DateTime::from_timestamp_millis expects i64, which `timestamp` already is.
         if let Some(dt) = DateTime::from_timestamp_millis(timestamp) {
             return Ok(dt.into());
         }
         
-        Err(FromSqlError::InvalidType)
+        Err(RusqliteFromSqlError::InvalidType)
     }
 }
 
-impl rusqlite::ToSql for Timestamp {
+impl ToSql for Timestamp { // Implement crate::ToSql
     fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
         self.to_sql_value()
     }
+
+    fn sql_type(&self) -> crate::rq::types::Type {
+        crate::rq::types::Type::Integer // Timestamps are stored as INTEGER
+    }
 }
 
-// Implement FromSql directly
-impl FromSql for Timestamp {
-    fn column_result(value: ValueRef<'_>) -> Result<Self, FromSqlError> {
-        Self::from_sql_value(value)
+// Implement crate::FromSql
+impl FromSql for Timestamp { // Implement crate::FromSql
+    fn from_sql(value: ValueRef<'_>) -> std::result::Result<Self, SqlitedFromSqlError> { // Expects crate::FromSqlError
+        Self::from_sql_value(value).map_err(Into::into)
     }
 }
 
 impl SqliteTypeName for Timestamp {
     fn sql_type_name() -> &'static str {
         "INTEGER"
+    }
+
+    fn is_integer_type() -> bool {
+        true
     }
 }

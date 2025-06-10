@@ -16,6 +16,7 @@ pub extern crate bincode;
 pub extern crate serde_sqlite_jsonb as jsonb;
 
 // Export our public modules
+pub mod row;
 pub mod connection;
 pub mod macros;
 pub mod migrations;
@@ -39,7 +40,7 @@ pub use error::{Result, SqlitedError};
 pub mod prelude {
     pub use crate::macros::*;
     pub use crate::types::*;
-    pub use rusqlite::ToSql;
+    pub use crate::row::*;
     pub use crate::connection::*;
 }
 
@@ -122,6 +123,21 @@ pub enum FromSqlError {
     /// An error from the underlying SQLite connection occurred.
     #[error("database error: {0}")]
     SqliteError(#[from] rusqlite::Error),
+}
+
+impl From<rusqlite::types::FromSqlError> for FromSqlError {
+    fn from(err: rusqlite::types::FromSqlError) -> Self {
+        match err {
+            rusqlite::types::FromSqlError::InvalidType =>
+                FromSqlError::InvalidType("Invalid type for Timestamp conversion".to_string()),
+            rusqlite::types::FromSqlError::OutOfRange(_) => 
+                FromSqlError::InvalidType("Value out of range for Timestamp conversion".to_string()),
+            rusqlite::types::FromSqlError::Other(err) => 
+                FromSqlError::InvalidType(format!("Underlying error during Timestamp conversion: {}", err)),
+            _ =>
+                FromSqlError::InvalidType("Unknown error".to_string()),
+        }
+    }
 }
 
 /// A trait for types that can be created from SQL values.
@@ -223,7 +239,18 @@ impl ToSql for u16 {
 
 impl ToSql for u32 {
     fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
-        if *self > i64::MAX as u32 {
+        Ok(ToSqlOutput::from(*self as i64))
+    }
+
+    fn sql_type(&self) -> rusqlite::types::Type {
+        rusqlite::types::Type::Integer
+    }
+}
+
+
+impl ToSql for u64 {
+    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
+        if *self > i64::MAX as u64 {
             return Err(Error::ToSqlConversionFailure(Box::new(
                 std::io::Error::new(std::io::ErrorKind::Other, "u32 value out of range for i64"),
             )));
@@ -278,7 +305,7 @@ impl ToSql for String {
 
 impl ToSql for Vec<String> {
     fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
-        match serde_json::to_string(self) {
+        match jsonb::to_vec(self) {
             Ok(json_string) => Ok(ToSqlOutput::from(json_string)),
             Err(e) => Err(rusqlite::Error::ToSqlConversionFailure(
                 Box::new(e)
@@ -468,6 +495,28 @@ impl FromSql for u32 {
     }
 }
 
+impl FromSql for u64 {
+    fn from_sql(value: ValueRef<'_>) -> std::result::Result<Self, FromSqlError> {
+        match value {
+            ValueRef::Integer(i) => {
+                if i < 0 {
+                    return Err(FromSqlError::InvalidType(format!(
+                        "Integer value {} out of range for u64",
+                        i
+                    )));
+                }
+                i.try_into().map_err(|_| {
+                    FromSqlError::InvalidType(format!("Integer value {} out of range for u64", i))
+                })
+            }
+            _ => Err(FromSqlError::InvalidType(format!(
+                "Expected INTEGER, got {:?}",
+                value
+            ))),
+        }
+    }
+}
+
 impl FromSql for f32 {
     fn from_sql(value: ValueRef<'_>) -> std::result::Result<Self, FromSqlError> {
         match value {
@@ -511,14 +560,13 @@ impl FromSql for String {
 impl FromSql for Vec<String> {
     fn from_sql(value: ValueRef<'_>) -> std::result::Result<Self, FromSqlError> {
         match value {
-            ValueRef::Text(t) => {
-                let s = std::str::from_utf8(t)
-                    .map_err(|_| FromSqlError::InvalidType("Invalid UTF-8 string for Vec<String>".to_string()))?;
-                serde_json::from_str(s)
-                    .map_err(|e| FromSqlError::InvalidType(format!("JSON deserialization error for Vec<String>: {}", e)))
+            ValueRef::Blob(b) => {
+                let r = jsonb::from_slice::<Self>(b)
+                    .map_err(|_| FromSqlError::InvalidType("Invalid jsonb for Vec<String>".to_string()))?;
+                Ok(r)
             }
             _ => Err(FromSqlError::InvalidType(format!(
-                "Expected TEXT for Vec<String>, got {:?}",
+                "Expected Blob for Vec<String>, got {:?}",
                 value
             ))),
         }

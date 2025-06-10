@@ -1,6 +1,7 @@
 use crate::pool::{ConnectionPool, PoolError, PooledSqliteConnection};
 use crate::savepoint::Savepoint;
 use crate::error::{Result, SqlitedError};
+use crate::row::Row as SqlitedRow;
 use rq::Params;
 use std::path::Path;
 
@@ -23,28 +24,33 @@ impl SqliteConnection {
 
     /// Execute a raw SQL query and return the rows as a statement
     // Update the return type to use the custom Result
-    pub fn query<F, T, P: Params>(&self, query: &str, params: P, map_fn: F) -> Result<Vec<T>>
+    pub fn query<F, T, P: Params>(&self, query_str: &str, params: P, mut map_fn: F) -> Result<Vec<T>>
     where
-        F: FnMut(&rq::Row) -> rq::Result<T>,
+        F: FnMut(&SqlitedRow) -> rq::Result<T>, // map_fn now takes &SqlitedRow
     {
-        // prepare returns rq::Result, ? converts error via From
-        let mut stmt = self.inner.prepare(query)?;
-        // query_map returns rq::Result, ? converts error via From
-        let rows = stmt.query_map(params, map_fn)?;
-        // Explicitly specify the collection type for collect using turbofish
-        rows.collect::<rq::Result<Vec<T>>>().map_err(SqlitedError::from)
+        let mut stmt = self.inner.prepare(query_str).map_err(SqlitedError::from)?;
+        let iter = stmt.query_map(params, |rusqlite_row| {
+            // Wrap rusqlite::Row with our SqlitedRow
+            let sl_row = SqlitedRow::new(rusqlite_row);
+            // Call the user's mapping function
+            map_fn(&sl_row)
+        }).map_err(SqlitedError::from)?;
+        
+        iter.collect::<rq::Result<Vec<T>>>().map_err(SqlitedError::from)
     }
 
     // Update the return type to use the custom Result
-    pub fn query_row<P, F, T>(&self, sql: &str, params: P, f: F) -> Result<T>
+    pub fn query_row<P, F, T>(&self, sql: &str, params: P, map_fn: F) -> Result<T>
     where
         P: rq::Params,
-        F: FnOnce(&rq::Row<'_>) -> rq::Result<T>,
+        F: FnOnce(&SqlitedRow<'_>) -> rq::Result<T>, // map_fn now takes &SqlitedRow
     {
-        // prepare returns rq::Result, ? converts error via From
-        let mut stmt = self.raw_connection().prepare(sql)?;
-        // query_row returns rq::Result, map_err converts error via From
-        stmt.query_row(params, f).map_err(SqlitedError::from)
+        // query_row on rusqlite::Connection takes a closure that receives &rusqlite::Row
+        // and returns rusqlite::Result<T>.
+        self.raw_connection().query_row(sql, params, |rusqlite_row| {
+            let sl_row = SqlitedRow::new(rusqlite_row);
+            map_fn(&sl_row)
+        }).map_err(SqlitedError::from)
     }
     
     /// Begin a new transaction

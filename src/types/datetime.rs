@@ -1,8 +1,9 @@
 use std::ops::{Deref, DerefMut};
 
 use chrono::{DateTime, NaiveDateTime, Utc};
-use rusqlite::types::{FromSql, FromSqlError, ToSqlOutput, ValueRef};
-use crate::{SqliteBindableValue, SqliteTypeName};
+use rusqlite::types::{ToSqlOutput, ValueRef};
+use crate::{SqliteBindableValue, SqliteTypeName, ToSql, FromSql, FromSqlError as SqlitedFromSqlError};
+use rusqlite::types::FromSqlError as RusqliteFromSqlError;
 
 // New wrapper type for DateTime<Utc>
 #[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -45,7 +46,7 @@ impl SqliteBindableValue for UtcDateTime {
         Ok(ToSqlOutput::from(self.to_rfc3339()))
     }
 
-    fn from_sql_value(value: ValueRef<'_>) -> Result<Self, FromSqlError> {
+    fn from_sql_value(value: ValueRef<'_>) -> Result<Self, RusqliteFromSqlError> { // Explicitly use RusqliteFromSqlError
         let text = value.as_str()?;
         
         // Try parsing as RFC3339 format first
@@ -63,20 +64,24 @@ impl SqliteBindableValue for UtcDateTime {
             return Ok(UtcDateTime(DateTime::<Utc>::from_naive_utc_and_offset(naive_dt, Utc)));
         }
         
-        Err(FromSqlError::InvalidType)
+        Err(RusqliteFromSqlError::InvalidType)
     }
 }
 
-impl rusqlite::ToSql for UtcDateTime {
+impl ToSql for UtcDateTime {
     fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
         self.to_sql_value()
+    }
+
+    fn sql_type(&self) -> crate::rq::types::Type { // Assuming rq is an alias for rusqlite
+        crate::rq::types::Type::Text
     }
 }
 
 // Implement FromSql directly
-impl FromSql for UtcDateTime {
-    fn column_result(value: ValueRef<'_>) -> Result<Self, FromSqlError> {
-        Self::from_sql_value(value)
+impl FromSql for UtcDateTime { // This is crate::FromSql
+    fn from_sql(value: ValueRef<'_>) -> std::result::Result<Self, SqlitedFromSqlError> { // Expects crate::FromSqlError
+        Self::from_sql_value(value).map_err(Into::into)
     }
 }
 

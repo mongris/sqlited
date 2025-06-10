@@ -152,7 +152,7 @@ fn do_parse(input: ParseStream) -> Result<TokenStream2> {
             #(
                 {
                     let value = (*#temp_vars).clone();
-                    let boxed_value: Box<dyn sqlited::rq::ToSql> = Box::new(value);
+                    let boxed_value: Box<dyn sqlited::ToSql> = Box::new(value);
                     result.inner.insert(
                         stringify!(#field_names).to_lowercase(),
                         boxed_value
