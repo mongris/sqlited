@@ -13,6 +13,7 @@ pub use sqlited_macros::{table, sql, sql_as, sql_as_value, sql_params, sql_str, 
 
 pub extern crate rusqlite as rq;
 pub extern crate bincode;
+pub extern crate serde_sqlite_jsonb as jsonb;
 
 // Export our public modules
 pub mod connection;
@@ -275,6 +276,21 @@ impl ToSql for String {
     }
 }
 
+impl ToSql for Vec<String> {
+    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
+        match serde_json::to_string(self) {
+            Ok(json_string) => Ok(ToSqlOutput::from(json_string)),
+            Err(e) => Err(rusqlite::Error::ToSqlConversionFailure(
+                Box::new(e)
+            )),
+        }
+    }
+
+    fn sql_type(&self) -> rusqlite::types::Type {
+        rusqlite::types::Type::Blob
+    }
+}
+
 impl ToSql for Vec<u8> {
     fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
         Ok(ToSqlOutput::from(self.as_slice()))
@@ -486,6 +502,23 @@ impl FromSql for String {
                 .map_err(|_| FromSqlError::InvalidType("Invalid UTF-8 string".to_string())),
             _ => Err(FromSqlError::InvalidType(format!(
                 "Expected TEXT, got {:?}",
+                value
+            ))),
+        }
+    }
+}
+
+impl FromSql for Vec<String> {
+    fn from_sql(value: ValueRef<'_>) -> std::result::Result<Self, FromSqlError> {
+        match value {
+            ValueRef::Text(t) => {
+                let s = std::str::from_utf8(t)
+                    .map_err(|_| FromSqlError::InvalidType("Invalid UTF-8 string for Vec<String>".to_string()))?;
+                serde_json::from_str(s)
+                    .map_err(|e| FromSqlError::InvalidType(format!("JSON deserialization error for Vec<String>: {}", e)))
+            }
+            _ => Err(FromSqlError::InvalidType(format!(
+                "Expected TEXT for Vec<String>, got {:?}",
                 value
             ))),
         }

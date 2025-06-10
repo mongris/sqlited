@@ -30,7 +30,7 @@ mod tests {
     pub struct Layout(pub OriginalLayout);
 
     // 定义复杂结构体，用于 JSON 序列化
-    #[sql_as(json)]
+    #[sql_as(jsonb)]
     pub struct Config {
         pub name: String,
         pub settings: HashMap<String, String>,

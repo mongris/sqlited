@@ -436,6 +436,59 @@ macro_rules! sqld {
             }
         }
     };
+
+    // 二进制序列化 (使用 jsonb)
+    (
+        jsonb $type:ty
+    ) => {
+        impl $crate::SqliteBindableValue for $type {
+            fn to_sql_value(&self) -> $crate::rq::Result<$crate::rq::types::ToSqlOutput<'_>> {
+                match $crate::jsonb::to_vec(&self) {
+                    Ok(bytes) => Ok($crate::rq::types::ToSqlOutput::from(bytes)),
+                    Err(err) => Err($crate::rq::Error::ToSqlConversionFailure(
+                        Box::new(err)
+                    ))
+                }
+            }
+            
+            fn from_sql_value(value: $crate::rq::types::ValueRef<'_>) -> Result<Self, $crate::rq::types::FromSqlError> {
+                use $crate::rq::types::FromSql;
+                Vec::<u8>::column_result(value).and_then(|bytes| {
+                    match $crate::jsonb::from_slice::<$type>(&bytes) {
+                        Ok(obj) => Ok(obj),
+                        Err(err) => Err($crate::rq::types::FromSqlError::Other(
+                            Box::new(err)
+                        ))
+                    }
+                })
+            }
+
+            fn sqlite_type_name() -> &'static str {
+                "BLOB"
+            }
+        }
+        
+        // 直接实现 ToSql 特征
+        impl $crate::rq::ToSql for $type {
+            fn to_sql(&self) -> $crate::rq::Result<$crate::rq::types::ToSqlOutput<'_>> {
+                self.to_sql_value()
+            }
+        }
+        
+        // 直接实现 FromSql 特征
+        impl $crate::rq::types::FromSql for $type {
+            fn column_result(value: $crate::rq::types::ValueRef<'_>) -> Result<Self, $crate::rq::types::FromSqlError> {
+                Self::from_sql_value(value)
+            }
+        }
+        
+        // 实现 SqliteTypeName
+        impl $crate::macros::SqliteTypeName for $type {
+            fn sql_type_name() -> &'static str {
+                "BLOB" // 使用 BLOB 类型存储二进制数据
+            }
+        }
+    };
     
     // 为了向后兼容，保留原 derive_enum_serialized 语法
     (

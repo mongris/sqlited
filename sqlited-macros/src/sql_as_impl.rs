@@ -102,7 +102,7 @@ pub fn sql_as(attr: TokenStream, input: TokenStream) -> TokenStream {
         Data::Struct(data_struct) => {
 
             // 定义有效的序列化风格
-            let valid_styles = ["json", "binary"];
+            let valid_styles = ["json", "jsonb", "binary"];
 
             // 验证风格是否有效
             if !valid_styles.contains(&style_str.as_str()) {
@@ -279,7 +279,7 @@ pub fn sql_as(attr: TokenStream, input: TokenStream) -> TokenStream {
         Data::Enum(data_enum) => {
 
             // 定义有效的序列化风格
-            let valid_styles = ["json", "binary", "string", "int"];
+            let valid_styles = ["json", "jsonb", "binary", "string", "int"];
 
             // 验证风格是否有效
             if !valid_styles.contains(&style_str.as_str()) {
@@ -457,7 +457,7 @@ pub fn sql_as(attr: TokenStream, input: TokenStream) -> TokenStream {
                 };
                 expanded.into()
             } else {
-                // 对于 json 和 binary，使用标准方法
+                // 对于 json, jsonb 和 binary，使用标准方法
                 let expanded = quote! {
                     #(#enum_attrs)*
                     #[derive(Default, Copy, Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
