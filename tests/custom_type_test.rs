@@ -3,6 +3,7 @@ mod tests {
     use std::collections::HashMap;
 
     use serde::{Deserialize, Serialize};
+    use solana_pubkey::Pubkey;
     use sqlited::{
         prelude::*, sql, sql_as, table
     };
@@ -24,6 +25,7 @@ mod tests {
         pub height: Option<i32>,
         pub fullscreen: bool,
         pub axis: Axis,
+        pub key: Option<Pubkey>,
     }
 
     #[sql_as(binary)]
@@ -101,6 +103,8 @@ mod tests {
         
         // 创建测试数据
         let axis = Axis::Vertical(1);
+
+        let pubkey = Pubkey::new_unique();
         
         let mut layout = Layout(OriginalLayout {
             x: 1,
@@ -109,6 +113,7 @@ mod tests {
             height: Some(600),
             fullscreen: true,
             axis: Axis::Horizontal,
+            key: Some(pubkey),
         });
 
         layout.x = 100;
@@ -155,6 +160,7 @@ mod tests {
         assert_eq!(data.0, "混合类型测试");
         assert_eq!(data.1, axis);
         assert_eq!(data.2, layout);
+        assert_eq!(data.2.0.key.unwrap(), pubkey);
         assert_eq!(data.3, config);
     }
 }

@@ -2,7 +2,7 @@ use rusqlite::{
     Error,
     types::{ToSqlOutput, Value, ValueRef},
 };
-use std::fmt;
+use std::{fmt, str::FromStr};
 use thiserror::Error;
 
 // Re-export for public use
@@ -339,6 +339,16 @@ impl ToSql for [u8] {
     }
 }
 
+impl ToSql for solana_pubkey::Pubkey {
+    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
+        Ok(ToSqlOutput::from(self.to_string()))
+    }
+
+    fn sql_type(&self) -> rusqlite::types::Type {
+        rusqlite::types::Type::Text
+    }
+}
+
 impl<T: ToSql> ToSql for Option<T> {
     fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
         match *self {
@@ -580,6 +590,22 @@ impl FromSql for Vec<u8> {
             ValueRef::Blob(b) => Ok(b.to_vec()),
             _ => Err(FromSqlError::InvalidType(format!(
                 "Expected BLOB, got {:?}",
+                value
+            ))),
+        }
+    }
+}
+
+impl FromSql for solana_pubkey::Pubkey {
+    fn from_sql(value: ValueRef<'_>) -> std::result::Result<Self, FromSqlError> {
+        match value {
+            ValueRef::Text(t) => {
+                let s = std::str::from_utf8(t)
+                    .map_err(|_| FromSqlError::InvalidType("Invalid UTF-8 string for Pubkey".to_string()))?;
+                solana_pubkey::Pubkey::from_str(s).map_err(|_| FromSqlError::InvalidType("Invalid Pubkey format".to_string()))
+            }
+            _ => Err(FromSqlError::InvalidType(format!(
+                "Expected TEXT for Pubkey, got {:?}",
                 value
             ))),
         }
