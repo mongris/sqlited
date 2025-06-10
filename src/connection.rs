@@ -2,6 +2,7 @@ use crate::pool::{ConnectionPool, PoolError, PooledSqliteConnection};
 use crate::savepoint::Savepoint;
 use crate::error::{Result, SqlitedError};
 use crate::row::Row as SqlitedRow;
+use crate::StaticParamsHolder;
 use rq::Params;
 use std::path::Path;
 
@@ -22,6 +23,11 @@ impl SqliteConnection {
         self.inner.execute(query, params).map_err(SqlitedError::from)
     }
 
+    pub fn execute2(&self, query: &str, params: StaticParamsHolder) -> Result<usize> {
+        // Use the StaticParamsHolder to execute the query
+        self.execute(query, &*params)
+    }
+
     /// Execute a raw SQL query and return the rows as a statement
     // Update the return type to use the custom Result
     pub fn query<F, T, P: Params>(&self, query_str: &str, params: P, mut map_fn: F) -> Result<Vec<T>>
@@ -39,6 +45,14 @@ impl SqliteConnection {
         iter.collect::<rq::Result<Vec<T>>>().map_err(SqlitedError::from)
     }
 
+    pub fn query2<F, T>(&self, query_str: &str, params: StaticParamsHolder, mut map_fn: F) -> Result<Vec<T>>
+    where
+        F: FnMut(&SqlitedRow) -> rq::Result<T>, // map_fn now takes &SqlitedRow
+    {
+        self.query(query_str, &*params, map_fn)
+    }
+
+
     // Update the return type to use the custom Result
     pub fn query_row<P, F, T>(&self, sql: &str, params: P, map_fn: F) -> Result<T>
     where
@@ -51,6 +65,13 @@ impl SqliteConnection {
             let sl_row = SqlitedRow::new(rusqlite_row);
             map_fn(&sl_row)
         }).map_err(SqlitedError::from)
+    }
+
+    pub fn query_row2<F, T>(&self, sql: &str, params: StaticParamsHolder, map_fn: F) -> Result<T>
+    where
+        F: FnOnce(&SqlitedRow<'_>) -> rq::Result<T>, // map_fn now takes &SqlitedRow
+    {
+        self.query_row(sql, &*params, map_fn)
     }
     
     /// Begin a new transaction

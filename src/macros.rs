@@ -1281,11 +1281,22 @@ macro_rules! define_db {
                 conn.execute(query, params)
             }
 
+            pub fn execute2(&self, query: &str, params: StaticParamsHolder) -> $crate::error::Result<usize> {
+                let conn = self.get_conn()?;
+                conn.execute2(query, params)
+            }
+
             /// Execute an INSERT query and return the last inserted row ID.
             /// Ensures the row ID is retrieved from the same connection used for the insert.
             pub fn execute_insert<P: $crate::rq::Params>(&self, query: &str, params: P) -> $crate::error::Result<i64> {
                 let conn = self.get_conn()?; // Get a connection
                 conn.execute(query, params)?; // Execute the insert on this connection
+                Ok(conn.last_insert_rowid()) // Get rowid from the *same* connection
+            }
+
+            pub fn execute_insert2(&self, query: &str, params: StaticParamsHolder) -> $crate::error::Result<i64> {
+                let conn = self.get_conn()?; // Get a connection
+                conn.execute2(query, params)?; // Execute the insert on this connection
                 Ok(conn.last_insert_rowid()) // Get rowid from the *same* connection
             }
 
@@ -1298,6 +1309,14 @@ macro_rules! define_db {
                 conn.query(query, params, map_fn)
             }
 
+            pub fn query2<F, T>(&self, query: &str, params: StaticParamsHolder, map_fn: F) -> $crate::error::Result<Vec<T>>
+            where
+                F: FnMut(&$crate::Row) -> $crate::rq::Result<T>,
+            {
+                let conn = self.get_conn()?;
+                conn.query2(query, params, map_fn)
+            }
+
             /// Query a single row
             pub fn query_row<P, F, T>(&self, sql: &str, params: P, f: F) -> $crate::error::Result<T>
             where
@@ -1306,6 +1325,14 @@ macro_rules! define_db {
             {
                 let conn = self.get_conn()?;
                 conn.query_row(sql, params, f)
+            }
+
+            pub fn query_row2<F, T>(&self, sql: &str, params: StaticParamsHolder, f: F) -> $crate::error::Result<T>
+            where
+                F: FnOnce(&$crate::Row<'_>) -> $crate::rq::Result<T>,
+            {
+                let conn = self.get_conn()?;
+                conn.query_row2(sql, params, f)
             }
 
             /// Get the last inserted row ID.

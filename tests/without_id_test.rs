@@ -146,6 +146,16 @@ mod tests {
             let query = sql_str!(SELECT * FROM test_post WHERE user_id = ? AND published = 1);
             self.query(query, params![user_id], TestPost::from_row)
         }
+
+        pub fn update_user(&self, user: &User) -> sqlited::Result<usize> {
+            let query = sql_str!(UPDATE user SET name = ?, age = ?, created_at_timestamp = ?  WHERE id = ?);
+            let params = sql_params!(User {
+                name: user.name.clone(),
+                age: user.age,
+                created_at_timestamp: user.created_at_timestamp.clone(),
+            });
+            self.execute2(query, params)
+        }
     }
 
     #[test]
