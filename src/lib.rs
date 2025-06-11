@@ -336,13 +336,20 @@ impl ToSql for Vec<String> {
 
 impl ToSql for Vec<solana_pubkey::Pubkey> {
     fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
-        let string_vec: Vec<&[u8; 32]> = self.iter().map(|p| p.as_array()).collect::<Vec<_>>();
-        match jsonb::to_vec(&string_vec) {
-            Ok(b) => Ok(ToSqlOutput::from(b)),
-            Err(e) => Err(rusqlite::Error::ToSqlConversionFailure(
-                Box::new(e)
-            )),
+        if self.is_empty() {
+            // Handle empty Vec case: store as an empty blob or NULL,
+            // depending on your preference. Empty blob is often fine.
+            return Ok(ToSqlOutput::from(Vec::<u8>::new()));
         }
+
+        // Each Pubkey is 32 bytes.
+        // Pre-allocate a Vec<u8> with the total required capacity.
+        let mut bytes_vec = Vec::with_capacity(self.len() * 32);
+        for pubkey in self {
+            bytes_vec.extend_from_slice(pubkey.as_ref()); // solana_pubkey::Pubkey derefs to [u8; 32]
+                                                          // or use pubkey.to_bytes() if that's the method name
+        }
+        Ok(ToSqlOutput::from(bytes_vec))
     }
 
     fn sql_type(&self) -> rusqlite::types::Type {
@@ -619,19 +626,46 @@ impl FromSql for Vec<solana_pubkey::Pubkey> {
     fn from_sql(value: ValueRef<'_>) -> std::result::Result<Self, FromSqlError> {
         match value {
             ValueRef::Blob(b) => {
-                let bytes: Vec<Vec<u8>>  = jsonb::from_slice(b)
-                    .map_err(|_| FromSqlError::InvalidType("Invalid jsonb for Vec<Pubkey>".to_string()))?;
-                let r = bytes.iter()
-                    .map(|byte_array| {
-                        let array: [u8; 32] = byte_array.as_slice().try_into()
-                            .map_err(|_| FromSqlError::InvalidType("Invalid byte array length for Pubkey".to_string()))?;
-                        Ok(solana_pubkey::Pubkey::new_from_array(array))
-                    })
-                    .collect::<std::result::Result<Vec<_>, FromSqlError>>()?;
-                Ok(r)
+                if b.is_empty() {
+                    // If an empty Vec was stored as an empty blob
+                    return Ok(Vec::new());
+                }
+                // Check if the blob length is a multiple of 32
+                if b.len() % 32 != 0 {
+                    return Err(FromSqlError::InvalidType(format!(
+                        "Invalid BLOB length for Vec<Pubkey>: expected multiple of 32, got {}",
+                        b.len()
+                    )));
+                }
+
+                let num_pubkeys = b.len() / 32;
+                let mut pubkeys_vec = Vec::with_capacity(num_pubkeys);
+
+                for chunk in b.chunks_exact(32) {
+                    // chunk is &[u8] of length 32
+                    // solana_pubkey::Pubkey can often be created directly from a [u8; 32] or &[u8] slice of length 32
+                    // Assuming Pubkey::new_from_array or similar exists and takes [u8; 32]
+                    // Or if Pubkey implements TryFrom<&[u8]>
+                    match chunk.try_into() as core::result::Result<&[u8; 32], _> {
+                        Ok(array_ref) => { // array_ref is now &[u8; 32]
+                            pubkeys_vec.push(solana_pubkey::Pubkey::new_from_array(*array_ref));
+                        }
+                        Err(_) => {
+                            // This should not happen if chunks_exact(32) is used and length is a multiple of 32
+                            return Err(FromSqlError::InvalidType(
+                                "Internal error: chunk conversion to [u8; 32] failed".to_string(),
+                            ));
+                        }
+                    }
+                }
+                Ok(pubkeys_vec)
+            }
+            ValueRef::Null => {
+                // Decide if NULL should be an empty Vec or an error
+                Ok(Vec::new()) // Or Err(FromSqlError::UnexpectedNull)
             }
             _ => Err(FromSqlError::InvalidType(format!(
-                "Expected Blob for Vec<Pubkey>, got {:?}",
+                "Expected BLOB for Vec<Pubkey>, got {:?}",
                 value
             ))),
         }
