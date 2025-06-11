@@ -367,6 +367,20 @@ impl ToSql for Vec<u8> {
     }
 }
 
+impl ToSql for Vec<i64> {
+    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
+        let mut bytes_vec = Vec::with_capacity(self.len() * 8);
+        for &value in self {
+            bytes_vec.extend_from_slice(&value.to_le_bytes());
+        }
+        Ok(ToSqlOutput::from(bytes_vec))
+    }
+
+    fn sql_type(&self) -> rusqlite::types::Type {
+        rusqlite::types::Type::Blob
+    }
+}
+
 impl ToSql for [u8] {
     fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
         Ok(ToSqlOutput::from(self))
@@ -678,6 +692,35 @@ impl FromSql for Vec<u8> {
             ValueRef::Blob(b) => Ok(b.to_vec()),
             _ => Err(FromSqlError::InvalidType(format!(
                 "Expected BLOB, got {:?}",
+                value
+            ))),
+        }
+    }
+}
+
+impl FromSql for Vec<i64> {
+    fn from_sql(value: ValueRef<'_>) -> std::result::Result<Self, FromSqlError> {
+        match value {
+            ValueRef::Blob(b) => {
+                let mut vec = Vec::new();
+                if b.is_empty() {
+                    return Ok(vec); // Empty Vec case
+                }
+                if b.len() % 8 != 0 {
+                    return Err(FromSqlError::InvalidType(format!(
+                        "Invalid BLOB length for Vec<i64>: expected multiple of 8, got {}",
+                        b.len()
+                    )));
+                }
+                for chunk in b.chunks_exact(8) {
+                    let mut array = [0u8; 8];
+                    array.copy_from_slice(chunk);
+                    vec.push(i64::from_le_bytes(array));
+                }
+                Ok(vec)
+            }
+            _ => Err(FromSqlError::InvalidType(format!(
+                "Expected BLOB for Vec<i64>, got {:?}",
                 value
             ))),
         }

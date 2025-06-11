@@ -2,6 +2,7 @@ use solana_pubkey::Pubkey;
 
 use crate::connection::SqliteConnection;
 use crate::error::{Result, SqlitedError};
+use crate::{FromSql, ToSql};
 use std::sync::{LazyLock, Mutex, Arc};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -105,20 +106,10 @@ impl SqliteTypeName for i32 {
     }
 }
 
-impl SqliteTypeName for Vec<String> {
-    fn sql_type_name() -> &'static str {
-        "BLOB"
-    }
-}
-
-impl SqliteTypeName for Vec<Pubkey> {
-    fn sql_type_name() -> &'static str {
-        "BLOB"
-    }
-}
-
-// 为 Vec<u8> (已实现) 和一些常见的字节类型实现 SqliteTypeName
-impl SqliteTypeName for Vec<u8> {
+impl<T> SqliteTypeName for Vec<T>
+where
+    T: FromSql + ToSql
+{
     fn sql_type_name() -> &'static str {
         "BLOB"
     }
