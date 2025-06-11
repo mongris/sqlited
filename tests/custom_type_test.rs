@@ -49,6 +49,7 @@ mod tests {
         layout: Layout,
         config: Config,
         tags: Option<Vec<String>>, // 可选字段，存储字符串数组
+        signers: Option<Vec<Pubkey>>, // 可选字段，存储 Pubkey 数组
     }
 
     // 定义测试表
@@ -130,12 +131,14 @@ mod tests {
         
         // 插入数据
         let query = sql!(
-            INSERT INTO custom_types (name, axis, layout, config) VALUES (?, ?, ?, ?),
+            INSERT INTO custom_types (name, axis, layout, config, tags, signers) VALUES (?, ?, ?, ?, ?, ?),
             CustomTypes {
                 name: "混合类型测试".to_string(),
                 axis,
                 layout: layout.clone(),
                 config: config.clone(),
+                tags: Some(vec!["tag1".to_string(), "tag2".to_string()]),
+                signers: Some(vec![pubkey]),
             }
         );
         
@@ -144,13 +147,14 @@ mod tests {
         
         // 验证插入的数据
         let results = conn.query(
-            "SELECT name, axis, layout, config FROM custom_types WHERE id = 1", 
+            "SELECT name, axis, layout, config, signers FROM custom_types WHERE id = 1", 
             [], 
             |row| Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, Axis>(1)?,
                 row.get::<_, Layout>(2)?,
-                row.get::<_, Config>(3)?
+                row.get::<_, Config>(3)?,
+                row.get::<_, Option<Vec<Pubkey>>>(4)?,
             ))
         ).unwrap();
         
@@ -162,5 +166,6 @@ mod tests {
         assert_eq!(data.2, layout);
         assert_eq!(data.2.0.key.unwrap(), pubkey);
         assert_eq!(data.3, config);
+        assert_eq!(data.4.as_ref().unwrap()[0], pubkey);
     }
 }

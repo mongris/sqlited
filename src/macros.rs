@@ -1,3 +1,5 @@
+use solana_pubkey::Pubkey;
+
 use crate::connection::SqliteConnection;
 use crate::error::{Result, SqlitedError};
 use std::sync::{LazyLock, Mutex, Arc};
@@ -104,6 +106,12 @@ impl SqliteTypeName for i32 {
 }
 
 impl SqliteTypeName for Vec<String> {
+    fn sql_type_name() -> &'static str {
+        "BLOB"
+    }
+}
+
+impl SqliteTypeName for Vec<Pubkey> {
     fn sql_type_name() -> &'static str {
         "BLOB"
     }

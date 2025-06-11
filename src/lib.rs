@@ -304,10 +304,41 @@ impl ToSql for String {
     }
 }
 
+impl ToSql for Vec<&str> {
+    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
+        match jsonb::to_vec(self) {
+            Ok(b) => Ok(ToSqlOutput::from(b)),
+            Err(e) => Err(rusqlite::Error::ToSqlConversionFailure(
+                Box::new(e)
+            )),
+        }
+    }
+
+    fn sql_type(&self) -> rusqlite::types::Type {
+        rusqlite::types::Type::Blob
+    }
+}
+
 impl ToSql for Vec<String> {
     fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
         match jsonb::to_vec(self) {
-            Ok(json_string) => Ok(ToSqlOutput::from(json_string)),
+            Ok(b) => Ok(ToSqlOutput::from(b)),
+            Err(e) => Err(rusqlite::Error::ToSqlConversionFailure(
+                Box::new(e)
+            )),
+        }
+    }
+
+    fn sql_type(&self) -> rusqlite::types::Type {
+        rusqlite::types::Type::Blob
+    }
+}
+
+impl ToSql for Vec<solana_pubkey::Pubkey> {
+    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
+        let string_vec: Vec<&[u8; 32]> = self.iter().map(|p| p.as_array()).collect::<Vec<_>>();
+        match jsonb::to_vec(&string_vec) {
+            Ok(b) => Ok(ToSqlOutput::from(b)),
             Err(e) => Err(rusqlite::Error::ToSqlConversionFailure(
                 Box::new(e)
             )),
@@ -578,6 +609,29 @@ impl FromSql for Vec<String> {
             }
             _ => Err(FromSqlError::InvalidType(format!(
                 "Expected Blob for Vec<String>, got {:?}",
+                value
+            ))),
+        }
+    }
+}
+
+impl FromSql for Vec<solana_pubkey::Pubkey> {
+    fn from_sql(value: ValueRef<'_>) -> std::result::Result<Self, FromSqlError> {
+        match value {
+            ValueRef::Blob(b) => {
+                let bytes: Vec<Vec<u8>>  = jsonb::from_slice(b)
+                    .map_err(|_| FromSqlError::InvalidType("Invalid jsonb for Vec<Pubkey>".to_string()))?;
+                let r = bytes.iter()
+                    .map(|byte_array| {
+                        let array: [u8; 32] = byte_array.as_slice().try_into()
+                            .map_err(|_| FromSqlError::InvalidType("Invalid byte array length for Pubkey".to_string()))?;
+                        Ok(solana_pubkey::Pubkey::new_from_array(array))
+                    })
+                    .collect::<std::result::Result<Vec<_>, FromSqlError>>()?;
+                Ok(r)
+            }
+            _ => Err(FromSqlError::InvalidType(format!(
+                "Expected Blob for Vec<Pubkey>, got {:?}",
                 value
             ))),
         }
