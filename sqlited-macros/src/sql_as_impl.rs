@@ -406,6 +406,7 @@ pub fn sql_as(attr: TokenStream, input: TokenStream) -> TokenStream {
                 let expanded = quote! {
                     #(#enum_attrs)*
                     #derive_traits_for_enum
+                    #[repr(u8)]
                     #vis enum #type_name #generics {
                         #(#variant_definitions),*
                     }
@@ -472,6 +473,7 @@ pub fn sql_as(attr: TokenStream, input: TokenStream) -> TokenStream {
                 let expanded = quote! {
                     #(#enum_attrs)*
                     #derive_traits_for_enum
+                    #[repr(u8)]
                     #vis enum #type_name #generics {
                         #(#variant_definitions),*
                     }
