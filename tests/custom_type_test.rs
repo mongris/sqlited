@@ -2,14 +2,13 @@
 mod tests {
     use std::collections::HashMap;
 
-    use serde::{Deserialize, Serialize};
     use solana_pubkey::Pubkey;
     use sqlited::{
         prelude::*, sql, sql_as, table
     };
 
     // 定义枚举
-    #[sql_as(binary)]
+    #[sql_as(borsh)]
     pub enum Axis {
         #[default]
         Horizontal,
@@ -17,19 +16,19 @@ mod tests {
     }
 
     // 定义复杂结构体，用于二进制序列化
-    #[derive(Default, Serialize, Deserialize, Clone, Debug, PartialEq)]
-    pub struct OriginalLayout {
+    #[sql_as(borsh)]
+    pub struct Layout {
         pub x: i32,
         pub y: i32,
         pub width: Option<i32>,
         pub height: Option<i32>,
         pub fullscreen: bool,
         pub axis: Axis,
-        pub key: Option<Pubkey>,
+        pub keys: Option<Vec<Pubkey>>,
     }
 
-    #[sql_as(binary)]
-    pub struct Layout(pub OriginalLayout);
+    // #[sql_as(borsh)]
+    // pub struct Layout(pub OriginalLayout);
 
     // 定义复杂结构体，用于 JSON 序列化
     #[sql_as(jsonb)]
@@ -107,15 +106,15 @@ mod tests {
 
         let pubkey = Pubkey::new_unique();
         
-        let mut layout = Layout(OriginalLayout {
+        let mut layout = Layout {
             x: 1,
             y: 200,
             width: Some(800),
             height: Some(600),
             fullscreen: true,
             axis: Axis::Horizontal,
-            key: Some(pubkey),
-        });
+            keys: Some(vec![pubkey]),
+        };
 
         layout.x = 100;
         
@@ -164,7 +163,7 @@ mod tests {
         assert_eq!(data.0, "混合类型测试");
         assert_eq!(data.1, axis);
         assert_eq!(data.2, layout);
-        assert_eq!(data.2.0.key.unwrap(), pubkey);
+        assert_eq!(data.2.keys.as_ref().unwrap()[0], pubkey);
         assert_eq!(data.3, config);
         assert_eq!(data.4.as_ref().unwrap()[0], pubkey);
     }

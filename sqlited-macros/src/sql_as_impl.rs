@@ -102,7 +102,7 @@ pub fn sql_as(attr: TokenStream, input: TokenStream) -> TokenStream {
         Data::Struct(data_struct) => {
 
             // 定义有效的序列化风格
-            let valid_styles = ["json", "jsonb", "binary"];
+            let valid_styles = ["json", "jsonb", "binary", "borsh"];
 
             // 验证风格是否有效
             if !valid_styles.contains(&style_str.as_str()) {
@@ -247,12 +247,19 @@ pub fn sql_as(attr: TokenStream, input: TokenStream) -> TokenStream {
                 (quote! {}, quote! {}) // Not a newtype
             };
 
+            // 根据 style_str 选择派生的 traits
+            let derive_traits = if style_str == "borsh" {
+                quote! { #[derive(Default, Clone, Debug, PartialEq, borsh::BorshSerialize, borsh::BorshDeserialize)] }
+            } else {
+                quote! { #[derive(Default, Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)] }
+            };
+
             // 生成扩展代码
             let expanded = if is_newtype {
                 // 对于新类型，添加 #[repr(transparent)]
                 quote! {
                     #(#struct_attrs)*
-                    #[derive(Default, Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+                    #derive_traits
                     #[repr(transparent)]  // 为新类型添加 repr(transparent) 属性
                     #vis #struct_def
 
@@ -266,7 +273,7 @@ pub fn sql_as(attr: TokenStream, input: TokenStream) -> TokenStream {
                 // 对于非新类型，使用标准实现
                 quote! {
                     #(#struct_attrs)*
-                    #[derive(Default, Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+                    #derive_traits
                     #vis #struct_def
 
                     sqlited::sqld!(#style #type_name);
@@ -279,7 +286,7 @@ pub fn sql_as(attr: TokenStream, input: TokenStream) -> TokenStream {
         Data::Enum(data_enum) => {
 
             // 定义有效的序列化风格
-            let valid_styles = ["json", "jsonb", "binary", "string", "int"];
+            let valid_styles = ["json", "jsonb", "binary", "string", "int", "borsh"];
 
             // 验证风格是否有效
             if !valid_styles.contains(&style_str.as_str()) {
@@ -301,13 +308,6 @@ pub fn sql_as(attr: TokenStream, input: TokenStream) -> TokenStream {
                     .to_compile_error()
                     .into();
             }
-
-            // 保留原始枚举属性（除了sql_as本身）
-            // let enum_attrs = input
-            //     .attrs
-            //     .iter()
-            //     .filter(|attr| !attr.path().is_ident("sql_as"))
-            //     .collect::<Vec<_>>();
 
             // 获取枚举变体
             let variants = &data_enum.variants;
@@ -374,6 +374,17 @@ pub fn sql_as(attr: TokenStream, input: TokenStream) -> TokenStream {
                 .filter(|attr| !attr.path().is_ident("sql_as"))
                 .collect::<Vec<_>>();
 
+            // 根据 style_str 选择派生的 traits
+            let derive_traits_for_enum = if style_str == "borsh" {
+                 // 对于 borsh 枚举，Default 可能需要手动实现或根据具体情况决定
+                quote! { #[derive(Default, Copy, Clone, Debug, PartialEq, borsh::BorshSerialize, borsh::BorshDeserialize)] }
+            } else if style_str == "string" || style_str == "int" {
+                // string 和 int 风格的枚举通常是 C-like，可以安全地派生 Default, Serialize, Deserialize
+                quote! { #[derive(Default, Copy, Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)] }
+            } else { // json, jsonb, binary
+                quote! { #[derive(Default, Copy, Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)] }
+            };
+
             // 特别处理 "string" 风格的枚举
             if style_str == "string" {
                 // 生成字符串序列化的变体映射
@@ -394,7 +405,7 @@ pub fn sql_as(attr: TokenStream, input: TokenStream) -> TokenStream {
                 // 生成枚举的扩展代码，附带字符串映射
                 let expanded = quote! {
                     #(#enum_attrs)*
-                    #[derive(Default, Copy, Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+                    #derive_traits_for_enum
                     #vis enum #type_name #generics {
                         #(#variant_definitions),*
                     }
@@ -444,7 +455,7 @@ pub fn sql_as(attr: TokenStream, input: TokenStream) -> TokenStream {
                 let expanded = quote! {
                     #(#enum_attrs)*
                     // 对于 int 枚举，Default, Serialize, Deserialize 可能需要用户根据具体情况调整或自定义
-                    #[derive(Default, Copy, Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+                    #derive_traits_for_enum
                     #vis enum #type_name #generics {
                         #(#variant_definitions),*
                     }
@@ -457,10 +468,10 @@ pub fn sql_as(attr: TokenStream, input: TokenStream) -> TokenStream {
                 };
                 expanded.into()
             } else {
-                // 对于 json, jsonb 和 binary，使用标准方法
+                // json, jsonb, binary, borsh (borsh 会在这里处理，因为它不匹配 string 或 int)
                 let expanded = quote! {
                     #(#enum_attrs)*
-                    #[derive(Default, Copy, Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+                    #derive_traits_for_enum
                     #vis enum #type_name #generics {
                         #(#variant_definitions),*
                     }

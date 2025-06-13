@@ -1,5 +1,3 @@
-use solana_pubkey::Pubkey;
-
 use crate::connection::SqliteConnection;
 use crate::error::{Result, SqlitedError};
 use crate::{FromSql, ToSql};
@@ -420,6 +418,63 @@ macro_rules! sqld {
                         stringify!($type)
                     ),
                 }
+            }
+        }
+        
+        // 实现自定义的 sqlited::FromSql 特征
+        impl $crate::FromSql for $type {
+            fn from_sql(value: $crate::rq::types::ValueRef<'_>) -> std::result::Result<Self, $crate::FromSqlError> {
+                Self::from_sql_value(value).map_err(Into::into)
+            }
+        }
+        
+        // 实现 SqliteTypeName
+        impl $crate::macros::SqliteTypeName for $type {
+            fn sql_type_name() -> &'static str {
+                "BLOB"
+            }
+        }
+    };
+
+    // 二进制序列化 (使用 borsh)
+    (
+        borsh $type:ty
+    ) => {
+        impl $crate::SqliteBindableValue for $type {
+            fn to_sql_value(&self) -> $crate::rq::Result<$crate::rq::types::ToSqlOutput<'_>> {
+                match $crate::borsh::to_vec(&self) {
+                    Ok(bytes) => Ok($crate::rq::types::ToSqlOutput::from(bytes)),
+                    Err(err) => Err($crate::rq::Error::ToSqlConversionFailure(
+                        Box::new(err)
+                    ))
+                }
+            }
+            
+            fn from_sql_value(value: $crate::rq::types::ValueRef<'_>) -> Result<Self, $crate::rq::types::FromSqlError> {
+                use $crate::rq::types::FromSql;
+                Vec::<u8>::column_result(value).and_then(|bytes| {
+                    match $crate::borsh::from_slice::<$type>(&bytes) {
+                        Ok(obj) => Ok(obj),
+                        Err(err) => Err($crate::rq::types::FromSqlError::Other(
+                            Box::new(err)
+                        ))
+                    }
+                })
+            }
+
+            fn sqlite_type_name() -> &'static str {
+                "BLOB"
+            }
+        }
+        
+        // 实现自定义的 sqlited::ToSql 特征
+        impl $crate::ToSql for $type {
+            fn to_sql(&self) -> $crate::rq::Result<$crate::rq::types::ToSqlOutput<'_>> {
+                self.to_sql_value()
+            }
+
+            fn sql_type(&self) -> $crate::rq::types::Type {
+                $crate::rq::types::Type::Blob
             }
         }
         

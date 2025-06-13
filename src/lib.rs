@@ -13,6 +13,7 @@ pub use sqlited_macros::{table, sql, sql_as, sql_as_value, sql_params, sql_str, 
 
 pub extern crate rusqlite as rq;
 pub extern crate bincode;
+pub extern crate borsh;
 pub extern crate serde_sqlite_jsonb as jsonb;
 
 // Export our public modules
@@ -304,13 +305,36 @@ impl ToSql for String {
     }
 }
 
-impl ToSql for Vec<&str> {
+// impl ToSql for Vec<&str> {
+//     fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
+//         match jsonb::to_vec(self) {
+//             Ok(b) => Ok(ToSqlOutput::from(b)),
+//             Err(e) => Err(rusqlite::Error::ToSqlConversionFailure(
+//                 Box::new(e)
+//             )),
+//         }
+//     }
+
+//     fn sql_type(&self) -> rusqlite::types::Type {
+//         rusqlite::types::Type::Blob
+//     }
+// }
+
+impl<T> crate::ToSql for Vec<T>
+where
+    T: borsh::BorshSerialize + fmt::Debug,
+{
     fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
-        match jsonb::to_vec(self) {
-            Ok(b) => Ok(ToSqlOutput::from(b)),
-            Err(e) => Err(rusqlite::Error::ToSqlConversionFailure(
-                Box::new(e)
-            )),
+        // self.0 is the inner Vec<T>
+        match borsh::to_vec(self) { // Vec<T> implements borsh::BorshSerialize
+            Ok(bytes) => Ok(ToSqlOutput::from(bytes)),
+            Err(e) => {
+                let err_msg = format!("Failed to BorshSerialize Vec<T>: {}", e);
+                Err(rusqlite::Error::ToSqlConversionFailure(
+                    Box::new(
+                        std::io::Error::new(std::io::ErrorKind::Other, err_msg),
+                    )))
+            }
         }
     }
 
@@ -319,67 +343,67 @@ impl ToSql for Vec<&str> {
     }
 }
 
-impl ToSql for Vec<String> {
-    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
-        match jsonb::to_vec(self) {
-            Ok(b) => Ok(ToSqlOutput::from(b)),
-            Err(e) => Err(rusqlite::Error::ToSqlConversionFailure(
-                Box::new(e)
-            )),
-        }
-    }
+// impl ToSql for Vec<String> {
+//     fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
+//         match jsonb::to_vec(self) {
+//             Ok(b) => Ok(ToSqlOutput::from(b)),
+//             Err(e) => Err(rusqlite::Error::ToSqlConversionFailure(
+//                 Box::new(e)
+//             )),
+//         }
+//     }
 
-    fn sql_type(&self) -> rusqlite::types::Type {
-        rusqlite::types::Type::Blob
-    }
-}
+//     fn sql_type(&self) -> rusqlite::types::Type {
+//         rusqlite::types::Type::Blob
+//     }
+// }
 
-impl ToSql for Vec<solana_pubkey::Pubkey> {
-    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
-        if self.is_empty() {
-            // Handle empty Vec case: store as an empty blob or NULL,
-            // depending on your preference. Empty blob is often fine.
-            return Ok(ToSqlOutput::from(Vec::<u8>::new()));
-        }
+// impl ToSql for Vec<solana_pubkey::Pubkey> {
+//     fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
+//         if self.is_empty() {
+//             // Handle empty Vec case: store as an empty blob or NULL,
+//             // depending on your preference. Empty blob is often fine.
+//             return Ok(ToSqlOutput::from(Vec::<u8>::new()));
+//         }
 
-        // Each Pubkey is 32 bytes.
-        // Pre-allocate a Vec<u8> with the total required capacity.
-        let mut bytes_vec = Vec::with_capacity(self.len() * 32);
-        for pubkey in self {
-            bytes_vec.extend_from_slice(pubkey.as_ref()); // solana_pubkey::Pubkey derefs to [u8; 32]
-                                                          // or use pubkey.to_bytes() if that's the method name
-        }
-        Ok(ToSqlOutput::from(bytes_vec))
-    }
+//         // Each Pubkey is 32 bytes.
+//         // Pre-allocate a Vec<u8> with the total required capacity.
+//         let mut bytes_vec = Vec::with_capacity(self.len() * 32);
+//         for pubkey in self {
+//             bytes_vec.extend_from_slice(pubkey.as_ref()); // solana_pubkey::Pubkey derefs to [u8; 32]
+//                                                           // or use pubkey.to_bytes() if that's the method name
+//         }
+//         Ok(ToSqlOutput::from(bytes_vec))
+//     }
 
-    fn sql_type(&self) -> rusqlite::types::Type {
-        rusqlite::types::Type::Blob
-    }
-}
+//     fn sql_type(&self) -> rusqlite::types::Type {
+//         rusqlite::types::Type::Blob
+//     }
+// }
 
-impl ToSql for Vec<u8> {
-    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
-        Ok(ToSqlOutput::from(self.as_slice()))
-    }
+// impl ToSql for Vec<u8> {
+//     fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
+//         Ok(ToSqlOutput::from(self.as_slice()))
+//     }
 
-    fn sql_type(&self) -> rusqlite::types::Type {
-        rusqlite::types::Type::Blob
-    }
-}
+//     fn sql_type(&self) -> rusqlite::types::Type {
+//         rusqlite::types::Type::Blob
+//     }
+// }
 
-impl ToSql for Vec<i64> {
-    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
-        let mut bytes_vec = Vec::with_capacity(self.len() * 8);
-        for &value in self {
-            bytes_vec.extend_from_slice(&value.to_le_bytes());
-        }
-        Ok(ToSqlOutput::from(bytes_vec))
-    }
+// impl ToSql for Vec<i64> {
+//     fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
+//         let mut bytes_vec = Vec::with_capacity(self.len() * 8);
+//         for &value in self {
+//             bytes_vec.extend_from_slice(&value.to_le_bytes());
+//         }
+//         Ok(ToSqlOutput::from(bytes_vec))
+//     }
 
-    fn sql_type(&self) -> rusqlite::types::Type {
-        rusqlite::types::Type::Blob
-    }
-}
+//     fn sql_type(&self) -> rusqlite::types::Type {
+//         rusqlite::types::Type::Blob
+//     }
+// }
 
 impl ToSql for [u8] {
     fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
@@ -620,112 +644,134 @@ impl FromSql for String {
     }
 }
 
-impl FromSql for Vec<String> {
-    fn from_sql(value: ValueRef<'_>) -> std::result::Result<Self, FromSqlError> {
+impl<T> crate::FromSql for Vec<T>
+where
+    T: borsh::BorshDeserialize,
+{
+    fn from_sql(value: rusqlite::types::ValueRef<'_>) -> std::result::Result<Self, crate::FromSqlError> {
         match value {
-            ValueRef::Blob(b) => {
-                let r = jsonb::from_slice::<Self>(b)
-                    .map_err(|_| FromSqlError::InvalidType("Invalid jsonb for Vec<String>".to_string()))?;
-                Ok(r)
+            rusqlite::types::ValueRef::Blob(b) => {
+                // Deserialize the whole Vec<T> from the slice
+                borsh::from_slice::<Vec<T>>(b)
+                    .map_err(|e| {
+                        let err_msg = format!("Failed to BorshDeserialize Vec<T>: {}", e);
+                        crate::FromSqlError::InvalidType(err_msg) // Use your defined FromSqlError variant
+                    })
             }
-            _ => Err(FromSqlError::InvalidType(format!(
-                "Expected Blob for Vec<String>, got {:?}",
-                value
+            _ => Err(crate::FromSqlError::InvalidType(format!(
+                "Expected BLOB for Vec<T>, got {:?}",
+                value.data_type()
             ))),
         }
     }
 }
 
-impl FromSql for Vec<solana_pubkey::Pubkey> {
-    fn from_sql(value: ValueRef<'_>) -> std::result::Result<Self, FromSqlError> {
-        match value {
-            ValueRef::Blob(b) => {
-                if b.is_empty() {
-                    // If an empty Vec was stored as an empty blob
-                    return Ok(Vec::new());
-                }
-                // Check if the blob length is a multiple of 32
-                if b.len() % 32 != 0 {
-                    return Err(FromSqlError::InvalidType(format!(
-                        "Invalid BLOB length for Vec<Pubkey>: expected multiple of 32, got {}",
-                        b.len()
-                    )));
-                }
+// impl FromSql for Vec<String> {
+//     fn from_sql(value: ValueRef<'_>) -> std::result::Result<Self, FromSqlError> {
+//         match value {
+//             ValueRef::Blob(b) => {
+//                 let r = jsonb::from_slice::<Self>(b)
+//                     .map_err(|_| FromSqlError::InvalidType("Invalid jsonb for Vec<String>".to_string()))?;
+//                 Ok(r)
+//             }
+//             _ => Err(FromSqlError::InvalidType(format!(
+//                 "Expected Blob for Vec<String>, got {:?}",
+//                 value
+//             ))),
+//         }
+//     }
+// }
 
-                let num_pubkeys = b.len() / 32;
-                let mut pubkeys_vec = Vec::with_capacity(num_pubkeys);
+// impl FromSql for Vec<solana_pubkey::Pubkey> {
+//     fn from_sql(value: ValueRef<'_>) -> std::result::Result<Self, FromSqlError> {
+//         match value {
+//             ValueRef::Blob(b) => {
+//                 if b.is_empty() {
+//                     // If an empty Vec was stored as an empty blob
+//                     return Ok(Vec::new());
+//                 }
+//                 // Check if the blob length is a multiple of 32
+//                 if b.len() % 32 != 0 {
+//                     return Err(FromSqlError::InvalidType(format!(
+//                         "Invalid BLOB length for Vec<Pubkey>: expected multiple of 32, got {}",
+//                         b.len()
+//                     )));
+//                 }
 
-                for chunk in b.chunks_exact(32) {
-                    // chunk is &[u8] of length 32
-                    // solana_pubkey::Pubkey can often be created directly from a [u8; 32] or &[u8] slice of length 32
-                    // Assuming Pubkey::new_from_array or similar exists and takes [u8; 32]
-                    // Or if Pubkey implements TryFrom<&[u8]>
-                    match chunk.try_into() as core::result::Result<&[u8; 32], _> {
-                        Ok(array_ref) => { // array_ref is now &[u8; 32]
-                            pubkeys_vec.push(solana_pubkey::Pubkey::new_from_array(*array_ref));
-                        }
-                        Err(_) => {
-                            // This should not happen if chunks_exact(32) is used and length is a multiple of 32
-                            return Err(FromSqlError::InvalidType(
-                                "Internal error: chunk conversion to [u8; 32] failed".to_string(),
-                            ));
-                        }
-                    }
-                }
-                Ok(pubkeys_vec)
-            }
-            ValueRef::Null => {
-                // Decide if NULL should be an empty Vec or an error
-                Ok(Vec::new()) // Or Err(FromSqlError::UnexpectedNull)
-            }
-            _ => Err(FromSqlError::InvalidType(format!(
-                "Expected BLOB for Vec<Pubkey>, got {:?}",
-                value
-            ))),
-        }
-    }
-}
+//                 let num_pubkeys = b.len() / 32;
+//                 let mut pubkeys_vec = Vec::with_capacity(num_pubkeys);
 
-impl FromSql for Vec<u8> {
-    fn from_sql(value: ValueRef<'_>) -> std::result::Result<Self, FromSqlError> {
-        match value {
-            ValueRef::Blob(b) => Ok(b.to_vec()),
-            _ => Err(FromSqlError::InvalidType(format!(
-                "Expected BLOB, got {:?}",
-                value
-            ))),
-        }
-    }
-}
+//                 for chunk in b.chunks_exact(32) {
+//                     // chunk is &[u8] of length 32
+//                     // solana_pubkey::Pubkey can often be created directly from a [u8; 32] or &[u8] slice of length 32
+//                     // Assuming Pubkey::new_from_array or similar exists and takes [u8; 32]
+//                     // Or if Pubkey implements TryFrom<&[u8]>
+//                     match chunk.try_into() as core::result::Result<&[u8; 32], _> {
+//                         Ok(array_ref) => { // array_ref is now &[u8; 32]
+//                             pubkeys_vec.push(solana_pubkey::Pubkey::new_from_array(*array_ref));
+//                         }
+//                         Err(_) => {
+//                             // This should not happen if chunks_exact(32) is used and length is a multiple of 32
+//                             return Err(FromSqlError::InvalidType(
+//                                 "Internal error: chunk conversion to [u8; 32] failed".to_string(),
+//                             ));
+//                         }
+//                     }
+//                 }
+//                 Ok(pubkeys_vec)
+//             }
+//             ValueRef::Null => {
+//                 // Decide if NULL should be an empty Vec or an error
+//                 Ok(Vec::new()) // Or Err(FromSqlError::UnexpectedNull)
+//             }
+//             _ => Err(FromSqlError::InvalidType(format!(
+//                 "Expected BLOB for Vec<Pubkey>, got {:?}",
+//                 value
+//             ))),
+//         }
+//     }
+// }
 
-impl FromSql for Vec<i64> {
-    fn from_sql(value: ValueRef<'_>) -> std::result::Result<Self, FromSqlError> {
-        match value {
-            ValueRef::Blob(b) => {
-                let mut vec = Vec::new();
-                if b.is_empty() {
-                    return Ok(vec); // Empty Vec case
-                }
-                if b.len() % 8 != 0 {
-                    return Err(FromSqlError::InvalidType(format!(
-                        "Invalid BLOB length for Vec<i64>: expected multiple of 8, got {}",
-                        b.len()
-                    )));
-                }
-                for chunk in b.chunks_exact(8) {
-                    let mut array = [0u8; 8];
-                    array.copy_from_slice(chunk);
-                    vec.push(i64::from_le_bytes(array));
-                }
-                Ok(vec)
-            }
-            _ => Err(FromSqlError::InvalidType(format!(
-                "Expected BLOB for Vec<i64>, got {:?}",
-                value
-            ))),
-        }
-    }
-}
+// impl FromSql for Vec<u8> {
+//     fn from_sql(value: ValueRef<'_>) -> std::result::Result<Self, FromSqlError> {
+//         match value {
+//             ValueRef::Blob(b) => Ok(b.to_vec()),
+//             _ => Err(FromSqlError::InvalidType(format!(
+//                 "Expected BLOB, got {:?}",
+//                 value
+//             ))),
+//         }
+//     }
+// }
+
+// impl FromSql for Vec<i64> {
+//     fn from_sql(value: ValueRef<'_>) -> std::result::Result<Self, FromSqlError> {
+//         match value {
+//             ValueRef::Blob(b) => {
+//                 let mut vec = Vec::new();
+//                 if b.is_empty() {
+//                     return Ok(vec); // Empty Vec case
+//                 }
+//                 if b.len() % 8 != 0 {
+//                     return Err(FromSqlError::InvalidType(format!(
+//                         "Invalid BLOB length for Vec<i64>: expected multiple of 8, got {}",
+//                         b.len()
+//                     )));
+//                 }
+//                 for chunk in b.chunks_exact(8) {
+//                     let mut array = [0u8; 8];
+//                     array.copy_from_slice(chunk);
+//                     vec.push(i64::from_le_bytes(array));
+//                 }
+//                 Ok(vec)
+//             }
+//             _ => Err(FromSqlError::InvalidType(format!(
+//                 "Expected BLOB for Vec<i64>, got {:?}",
+//                 value
+//             ))),
+//         }
+//     }
+// }
 
 impl FromSql for solana_pubkey::Pubkey {
     fn from_sql(value: ValueRef<'_>) -> std::result::Result<Self, FromSqlError> {
