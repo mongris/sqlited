@@ -377,12 +377,12 @@ pub fn sql_as(attr: TokenStream, input: TokenStream) -> TokenStream {
             // 根据 style_str 选择派生的 traits
             let derive_traits_for_enum = if style_str == "borsh" {
                  // 对于 borsh 枚举，Default 可能需要手动实现或根据具体情况决定
-                quote! { #[derive(Default, Copy, Clone, Debug, PartialEq, borsh::BorshSerialize, borsh::BorshDeserialize)] }
+                quote! { #[derive(Default, Clone, Debug, PartialEq, borsh::BorshSerialize, borsh::BorshDeserialize)] }
             } else if style_str == "string" || style_str == "int" {
                 // string 和 int 风格的枚举通常是 C-like，可以安全地派生 Default, Serialize, Deserialize
-                quote! { #[derive(Default, Copy, Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)] }
+                quote! { #[derive(Default, Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)] }
             } else { // json, jsonb, binary
-                quote! { #[derive(Default, Copy, Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)] }
+                quote! { #[derive(Default, Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)] }
             };
 
             // 特别处理 "string" 风格的枚举
