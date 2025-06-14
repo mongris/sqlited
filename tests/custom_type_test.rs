@@ -133,7 +133,7 @@ mod tests {
             INSERT INTO custom_types (name, axis, layout, config, tags, signers) VALUES (?, ?, ?, ?, ?, ?),
             CustomTypes {
                 name: "混合类型测试".to_string(),
-                axis,
+                axis: axis.clone(),
                 layout: layout.clone(),
                 config: config.clone(),
                 tags: Some(vec!["tag1".to_string(), "tag2".to_string()]),
