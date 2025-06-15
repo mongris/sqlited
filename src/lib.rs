@@ -322,7 +322,7 @@ impl ToSql for String {
 
 impl<T> crate::ToSql for Vec<T>
 where
-    T: borsh::BorshSerialize + fmt::Debug,
+    T: ::borsh::BorshSerialize + fmt::Debug,
 {
     fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
         // self.0 is the inner Vec<T>
