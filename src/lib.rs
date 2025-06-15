@@ -322,11 +322,11 @@ impl ToSql for String {
 
 impl<T> crate::ToSql for Vec<T>
 where
-    T: borsh::BorshSerialize + fmt::Debug,
+    T: crate::borsh::BorshSerialize + fmt::Debug,
 {
     fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
         // self.0 is the inner Vec<T>
-        match borsh::to_vec(self) { // Vec<T> implements borsh::BorshSerialize
+        match crate::borsh::to_vec(self) { // Vec<T> implements borsh::BorshSerialize
             Ok(bytes) => Ok(ToSqlOutput::from(bytes)),
             Err(e) => {
                 let err_msg = format!("Failed to BorshSerialize Vec<T>: {}", e);
@@ -646,13 +646,13 @@ impl FromSql for String {
 
 impl<T> crate::FromSql for Vec<T>
 where
-    T: borsh::BorshDeserialize,
+    T: crate::borsh::BorshDeserialize,
 {
     fn from_sql(value: rusqlite::types::ValueRef<'_>) -> std::result::Result<Self, crate::FromSqlError> {
         match value {
             rusqlite::types::ValueRef::Blob(b) => {
                 // Deserialize the whole Vec<T> from the slice
-                borsh::from_slice::<Vec<T>>(b)
+                crate::borsh::from_slice::<Vec<T>>(b)
                     .map_err(|e| {
                         let err_msg = format!("Failed to BorshDeserialize Vec<T>: {}", e);
                         crate::FromSqlError::InvalidType(err_msg) // Use your defined FromSqlError variant
