@@ -13,7 +13,7 @@ pub use sqlited_macros::{table, sql, sql_as, sql_as_value, sql_params, sql_str, 
 
 pub extern crate rusqlite as rq;
 pub extern crate bincode;
-pub extern crate borsh;
+pub extern crate borsh as borsh;
 pub extern crate serde_sqlite_jsonb as jsonb;
 
 // Export our public modules

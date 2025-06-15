@@ -15,4 +15,3 @@ quote = "1.0"
 syn = { version = "2.0", features = ["full", "extra-traits"] }
 sqlformat = "0.2"
 proc-macro-error = "1.0"
-borsh = { version = "1.5.7", features = ["derive"] }
