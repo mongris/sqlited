@@ -87,7 +87,16 @@ impl SqlBuilder {
                     ')' | ']' => self.push(&token_str, false, true), // 闭括号前不加空格，后允许
                     '?' => self.push("?", true, true), // 问号前后通常有空格
                     // 简单处理常见运算符
-                    '=' | '+' | '-' | '*' | '/' | '<' | '>' => {
+                    '>' | '<' => {
+                        if p.spacing() == proc_macro2::Spacing::Joint {
+                            // 如果是多字符运算符（如 >=, <=），则不加空格
+                            self.push(&token_str, false, false);
+                        } else {
+                            // 单字符运算符前后加空格
+                            self.push(&token_str, true, true);
+                        }
+                    }
+                    '=' | '+' | '-' | '*' | '/' => {
                          // 如果是多字符运算符（如 ::, >=），则不加空格
                          if token_str.len() == 1 {
                              self.push(&token_str, true, true);

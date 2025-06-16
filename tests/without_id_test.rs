@@ -91,7 +91,7 @@ mod tests {
 
         query! {
             fn get_users_by_age(age: i32) -> Result<Vec<User>> {
-                SELECT * FROM User WHERE age > ?1
+                SELECT * FROM User WHERE age >= ?1
             }
         }
 
