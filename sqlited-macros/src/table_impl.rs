@@ -101,143 +101,200 @@ pub fn table(input: TokenStream) -> TokenStream {
 /// 解析表级属性，增加迁移类型拼写检查
 fn process_table_attributes(attrs: &[Attribute]) -> Vec<TableAttribute> {
     let mut table_attrs = Vec::new();
+    const VALID_TABLE_ATTRIBUTES: &[&str] = &["migration", "constraint", "index", "unique_index"];
 
     for attr in attrs {
-        if let Some(attr_meta_name) = attr.path().get_ident() {
-            // 打印调试信息
-            // println!("Processing attribute: {}", attr_name);
+        if let Some(attr_meta_name_ident) = attr.path().get_ident() {
+            let attr_name = attr_meta_name_ident.to_string();
 
-            if attr_meta_name == "migration" {
+            if attr_name == "migration" {
                 match &attr.meta {
                     Meta::List(meta_list) => {
-                        let args: Vec<String> = meta_list
-                            .parse_args_with(Punctuated::<LitStr, Token![,]>::parse_terminated)
-                            .map(|p| p.iter().map(|lit| lit.value()).collect())
-                            .unwrap_or_default();
-                        if args.is_empty() {
-                            emit_error!(
-                                meta_list.span(),
-                                "Migration requires at least one argument (migration type)"
-                            );
-                            continue;
+                        match meta_list.parse_args_with(Punctuated::<LitStr, Token![,]>::parse_terminated) {
+                            Ok(parsed_args_punct) => {
+                                let args: Vec<String> = parsed_args_punct.iter().map(|lit| lit.value()).collect();
+                                if args.is_empty() {
+                                    emit_error!(
+                                        meta_list.span(),
+                                        "Migration attribute requires at least one argument (migration type)."
+                                    );
+                                    continue;
+                                }
+
+                                let migration_type_str = &args[0];
+                                let valid_migration_types = [
+                                    "add_column",
+                                    "rename_column",
+                                    "modify_column",
+                                    "drop_column",
+                                    "add_index",
+                                    "drop_index",
+                                    "custom",
+                                ];
+
+                                if !valid_migration_types.contains(&migration_type_str.as_str()) {
+                                    let suggestion =
+                                        find_closest_match(migration_type_str, &valid_migration_types);
+                                    let error_msg = if let Some(suggested) = suggestion {
+                                        format!(
+                                            "Invalid migration type '{}'. Did you mean '{}'?",
+                                            migration_type_str, suggested
+                                        )
+                                    } else {
+                                        format!(
+                                            "Invalid migration type '{}'. Valid types are: {}",
+                                            migration_type_str,
+                                            valid_migration_types.join(", ")
+                                        )
+                                    };
+                                    emit_error!(parsed_args_punct.span(), "{}", error_msg); // Use span of parsed args
+                                    continue;
+                                }
+
+                                let migration_type = match migration_type_str.as_str() {
+                                    "add_column" => MigrationType::AddColumn,
+                                    "rename_column" => MigrationType::RenameColumn,
+                                    "modify_column" => MigrationType::ModifyColumn,
+                                    "drop_column" => MigrationType::DropColumn,
+                                    "add_index" => MigrationType::AddIndex,
+                                    "drop_index" => MigrationType::DropIndex,
+                                    "custom" => MigrationType::Custom,
+                                    _ => unreachable!(),
+                                };
+
+                                check_migration_args(&migration_type, &args, parsed_args_punct.span()); // Use span of parsed args
+
+                                table_attrs.push(TableAttribute {
+                                    attr_type: TableAttributeType::Migration,
+                                    value: args[1..].to_vec(),
+                                    migration_type: Some(migration_type),
+                                });
+                            }
+                            Err(e) => {
+                                emit_error!(
+                                    meta_list.span(),
+                                    "Failed to parse arguments for `migration` attribute: {}. Expected comma-separated string literals.",
+                                    e
+                                );
+                                continue;
+                            }
                         }
-
-                        // 检查迁移类型是否有效
-                        let migration_type_str = &args[0];
-                        let valid_migration_types = [
-                            "add_column",
-                            "rename_column",
-                            "modify_column",
-                            "drop_column",
-                            "add_index",
-                            "drop_index",
-                            "custom",
-                        ];
-
-                        if !valid_migration_types.contains(&migration_type_str.as_str()) {
-                            let suggestion =
-                                find_closest_match(migration_type_str, &valid_migration_types);
-                            let error_msg = if let Some(suggested) = suggestion {
-                                format!(
-                                    "Invalid migration type '{}'. Did you mean '{}'?",
-                                    migration_type_str, suggested
-                                )
-                            } else {
-                                format!(
-                                    "Invalid migration type '{}'. Valid types are: {}",
-                                    migration_type_str,
-                                    valid_migration_types.join(", ")
-                                )
-                            };
-
-                            emit_error!(meta_list.span(), "{}", error_msg);
-                            continue;
-                        }
-
-                        // 解析迁移类型
-                        let migration_type = match migration_type_str.as_str() {
-                            "add_column" => MigrationType::AddColumn,
-                            "rename_column" => MigrationType::RenameColumn,
-                            "modify_column" => MigrationType::ModifyColumn,
-                            "drop_column" => MigrationType::DropColumn,
-                            "add_index" => MigrationType::AddIndex,
-                            "drop_index" => MigrationType::DropIndex,
-                            "custom" => MigrationType::Custom,
-                            _ => unreachable!(),
-                        };
-
-                        // 检查参数数量是否正确
-                        check_migration_args(&migration_type, &args, meta_list.span());
-
-                        table_attrs.push(TableAttribute {
-                            attr_type: TableAttributeType::Migration,
-                            value: args[1..].to_vec(), // 迁移参数
-                            migration_type: Some(migration_type),
-                        });
                     }
                     _ => {
-                        emit_error!(attr.span(), "Invalid attribute format for migration");
+                        emit_error!(attr.span(), "Invalid attribute format for migration. Expected #[migration(...)]");
                     }
                 }
-            } else if attr_meta_name == "constraint" {
-                // 处理表级约束
+            } else if attr_name == "constraint" {
                 match &attr.meta {
                     Meta::List(list) => {
-                        if let Ok(lit) = list.parse_args::<LitStr>() {
-                            // println!("Found constraint: {}", lit.value());
-                            table_attrs.push(TableAttribute {
-                                attr_type: TableAttributeType::Constraint,
-                                value: vec![lit.value()],
-                                migration_type: None,
-                            });
-                        }
-                    }
-                    _ => panic!("Incorrect format for using the `constraint` attribute."),
-                }
-            } else if attr_meta_name == "index" {
-                // 处理普通索引
-                match &attr.meta {
-                    Meta::List(list) => {
-                        if let Ok(args) =
-                            list.parse_args_with(Punctuated::<LitStr, Token![,]>::parse_terminated)
-                        {
-                            if args.len() >= 2 {
-                                let idx_name = args[0].value();
-                                let idx_columns = args[1].value();
-                                // println!("Found index: {} -> {}", idx_name, idx_columns);
+                        match list.parse_args::<LitStr>() {
+                            Ok(lit) => {
                                 table_attrs.push(TableAttribute {
-                                    attr_type: TableAttributeType::Index,
-                                    value: vec![idx_name, idx_columns],
+                                    attr_type: TableAttributeType::Constraint,
+                                    value: vec![lit.value()],
                                     migration_type: None,
                                 });
                             }
-                        }
-                    }
-                    _ => panic!("Incorrect format for using the `index` attribute."),
-                }
-            } else if attr_meta_name == "unique_index" {
-                // 处理唯一索引
-                match &attr.meta {
-                    Meta::List(list) => {
-                        if let Ok(args) =
-                            list.parse_args_with(Punctuated::<LitStr, Token![,]>::parse_terminated)
-                        {
-                            if args.len() >= 2 {
-                                let idx_name = args[0].value();
-                                let idx_columns = args[1].value();
-                                // println!("Found unique index: {} -> {}", idx_name, idx_columns);
-                                table_attrs.push(TableAttribute {
-                                    attr_type: TableAttributeType::UniqueIndex,
-                                    value: vec![idx_name, idx_columns],
-                                    migration_type: None,
-                                });
+                            Err(e) => {
+                                emit_error!(
+                                    list.span(),
+                                    "The `constraint` attribute expects a single string literal argument. Error: {}",
+                                    e
+                                );
                             }
                         }
                     }
-                    _ => panic!("Incorrect format for using the `unique_index` attribute."),
+                    _ => {
+                        emit_error!(attr.span(), "Incorrect format for the `constraint` attribute. Expected #[constraint(\"...\")]");
+                    }
                 }
+            } else if attr_name == "index" {
+                match &attr.meta {
+                    Meta::List(list) => {
+                        match list.parse_args_with(Punctuated::<LitStr, Token![,]>::parse_terminated) {
+                            Ok(args) => {
+                                if args.len() == 2 {
+                                    let idx_name = args[0].value();
+                                    let idx_columns = args[1].value();
+                                    table_attrs.push(TableAttribute {
+                                        attr_type: TableAttributeType::Index,
+                                        value: vec![idx_name, idx_columns],
+                                        migration_type: None,
+                                    });
+                                } else {
+                                    emit_error!(
+                                        list.span(),
+                                        "The `index` attribute expects 2 string literal arguments (index_name, column_names). Found {} arguments.",
+                                        args.len()
+                                    );
+                                }
+                            }
+                            Err(e) => {
+                                emit_error!(
+                                    list.span(),
+                                    "Failed to parse arguments for `index` attribute: {}. Expected two comma-separated string literals.",
+                                    e
+                                );
+                            }
+                        }
+                    }
+                    _ => {
+                        emit_error!(attr.span(), "Incorrect format for the `index` attribute. Expected #[index(\"name\", \"columns\")]");
+                    }
+                }
+            } else if attr_name == "unique_index" {
+                match &attr.meta {
+                    Meta::List(list) => {
+                        match list.parse_args_with(Punctuated::<LitStr, Token![,]>::parse_terminated) {
+                            Ok(args) => {
+                                if args.len() == 2 {
+                                    let idx_name = args[0].value();
+                                    let idx_columns = args[1].value();
+                                    table_attrs.push(TableAttribute {
+                                        attr_type: TableAttributeType::UniqueIndex,
+                                        value: vec![idx_name, idx_columns],
+                                        migration_type: None,
+                                    });
+                                } else {
+                                    emit_error!(
+                                        list.span(),
+                                        "The `unique_index` attribute expects 2 string literal arguments (index_name, column_names). Found {} arguments.",
+                                        args.len()
+                                    );
+                                }
+                            }
+                            Err(e) => {
+                                emit_error!(
+                                    list.span(),
+                                    "Failed to parse arguments for `unique_index` attribute: {}. Expected two comma-separated string literals.",
+                                    e
+                                );
+                            }
+                        }
+                    }
+                    _ => {
+                        emit_error!(attr.span(), "Incorrect format for the `unique_index` attribute. Expected #[unique_index(\"name\", \"columns\")]");
+                    }
+                }
+            } else {
+                // Unknown attribute name, suggest a valid one if possible.
+                let suggestion = find_closest_match(&attr_name, VALID_TABLE_ATTRIBUTES);
+                let error_msg = if let Some(suggested) = suggestion {
+                    format!(
+                        "Unknown table attribute '{}'. Did you mean '{}'?",
+                        attr_name, suggested
+                    )
+                } else {
+                    format!(
+                        "Unknown table attribute '{}'. Valid attributes are: {}.",
+                        attr_name,
+                        VALID_TABLE_ATTRIBUTES.join(", ")
+                    )
+                };
+                emit_error!(attr.path().span(), "{}", error_msg);
             }
         }
+        // Silently ignore attributes with complex paths for now
     }
 
     table_attrs
