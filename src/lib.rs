@@ -252,12 +252,26 @@ impl ToSql for u32 {
 
 impl ToSql for u64 {
     fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
-        if *self > i64::MAX as u64 {
-            return Err(Error::ToSqlConversionFailure(Box::new(
-                std::io::Error::new(std::io::ErrorKind::Other, "u32 value out of range for i64"),
-            )));
+        if *self <= i64::MAX as u64 {
+            // 如果在 i64 范围内，直接存储
+            Ok(ToSqlOutput::from(*self as i64))
+        } else {
+            // 如果超出 i64 范围，计算偏移量并存储为负数
+            // 将值映射到负数范围：[i64::MIN, -1]
+            let offset = *self - (i64::MAX as u64 + 1);
+            // 确保 offset 在有效范围内
+            if offset <= i64::MAX as u64 {
+                Ok(ToSqlOutput::from(i64::MIN + offset as i64))
+            } else {
+                // 这种情况不应该发生，因为 u64 的最大值减去 i64::MAX+1 应该等于 i64::MAX
+                Err(rusqlite::Error::ToSqlConversionFailure(
+                    Box::new(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "u64 value too large to encode"
+                    ))
+                ))
+            }
         }
-        Ok(ToSqlOutput::from(*self as i64))
     }
 
     fn sql_type(&self) -> rusqlite::types::Type {
@@ -586,18 +600,18 @@ impl FromSql for u64 {
     fn from_sql(value: ValueRef<'_>) -> std::result::Result<Self, FromSqlError> {
         match value {
             ValueRef::Integer(i) => {
-                if i < 0 {
-                    return Err(FromSqlError::InvalidType(format!(
-                        "Integer value {} out of range for u64",
-                        i
-                    )));
+                if i >= 0 {
+                    // 正数直接转换
+                    Ok(i as u64)
+                } else {
+                    // 负数表示超出 i64::MAX 的 u64 值
+                    // 从负数范围恢复：offset = i - i64::MIN
+                    let offset = (i - i64::MIN) as u64;
+                    Ok((i64::MAX as u64 + 1) + offset)
                 }
-                i.try_into().map_err(|_| {
-                    FromSqlError::InvalidType(format!("Integer value {} out of range for u64", i))
-                })
             }
             _ => Err(FromSqlError::InvalidType(format!(
-                "Expected INTEGER, got {:?}",
+                "Expected INTEGER for u64, got {:?}",
                 value
             ))),
         }

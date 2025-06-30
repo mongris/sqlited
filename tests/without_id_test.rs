@@ -34,7 +34,7 @@ mod tests {
         user_id: i32,
         long_u64: u64,
         long_i64: i64,
-        long_i64_vec: Vec<i64>,
+        long_u64_vec: Vec<u64>,
     }
 
     #[table]
@@ -350,9 +350,9 @@ mod tests {
                 content: content.to_string(),
                 published: *published,
                 user_id: user_id,
-                long_u64: 9223372036854775807u64,
+                long_u64: 10000000000000000000u64,
                 long_i64: 1234567890123456789i64,
-                long_i64_vec: vec![1, 2, 9223372036854775807i64],
+                long_u64_vec: vec![1, 2, 10000000000000000000u64],
             });
             
             db.execute(
@@ -363,18 +363,18 @@ mod tests {
         
         // 查询所有已发布的帖子
         let published_posts = db.query(
-            "SELECT id, title, long_u64, long_i64_vec FROM test_post WHERE published = ? AND user_id = ? ORDER BY id",
+            "SELECT id, title, long_u64, long_u64_vec FROM test_post WHERE published = ? AND user_id = ? ORDER BY id",
             params![&true, &user_id],
-            |row| Ok((row.get::<_, i32>(0)?, row.get::<_, String>(1)?, row.get::<_, u64>(2)?, row.get::<_, Vec<i64>>(3)?))
+            |row| Ok((row.get::<_, i32>(0)?, row.get::<_, String>(1)?, row.get::<_, u64>(2)?, row.get::<_, Vec<u64>>(3)?))
         ).unwrap();
 
         // 验证有两篇已发布的帖子
         assert_eq!(published_posts.len(), 2);
         assert_eq!(published_posts[0].1, "First Post");
         assert_eq!(published_posts[1].1, "Tech Review");
-        assert_eq!(published_posts[0].2, 9223372036854775807u64);
-        // 验证 long_i64_vec 字段
-        assert_eq!(published_posts[0].3, vec![1, 2, 9223372036854775807i64]);
+        assert_eq!(published_posts[0].2, 10000000000000000000u64);
+        // 验证 long_u64_vec 字段
+        assert_eq!(published_posts[0].3, vec![1, 2, 10000000000000000000u64]);
         
 
         let published_posts = db.get_published_posts_by_user(user_id).unwrap();
@@ -383,7 +383,7 @@ mod tests {
         assert_eq!(published_posts.len(), 2);
         assert_eq!(published_posts[0].title, "First Post");
         assert_eq!(published_posts[1].title, "Tech Review");
-        assert_eq!(published_posts[0].long_u64, 9223372036854775807u64);
+        assert_eq!(published_posts[0].long_u64, 10000000000000000000u64);
         
         
         // 查询单个帖子并更新
@@ -573,7 +573,7 @@ mod tests {
                     user_id: *user_id,
                     long_u64: 9876543210u64, // 添加缺失的 u64 字段
                     long_i64: -1234567890i64, // 添加缺失的 i64 字段
-                    long_i64_vec: vec![1, 2, 3, 4, 5], // 添加缺失的 i64 Vec 字段
+                    long_u64_vec: vec![1, 2, 3, 4, 5], // 添加缺失的 i64 Vec 字段
                 });
                 
                 db.execute(
