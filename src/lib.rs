@@ -680,6 +680,78 @@ where
     }
 }
 
+/// Implements ToSql for tuple (A, B) where both A and B implement BorshSerialize
+impl<A, B> crate::ToSql for (A, B)
+where
+    A: crate::borsh::BorshSerialize + fmt::Debug,
+    B: crate::borsh::BorshSerialize + fmt::Debug,
+{
+    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
+        match crate::borsh::to_vec(self) {
+            Ok(bytes) => Ok(ToSqlOutput::from(bytes)),
+            Err(e) => Err(rusqlite::Error::ToSqlConversionFailure(Box::new(e))),
+        }
+    }
+
+    fn sql_type(&self) -> rusqlite::types::Type {
+        rusqlite::types::Type::Blob
+    }
+}
+
+/// Implements FromSql for tuple (A, B) where both A and B implement BorshDeserialize
+impl<A, B> crate::FromSql for (A, B)
+where
+    A: crate::borsh::BorshDeserialize,
+    B: crate::borsh::BorshDeserialize,
+{
+    fn from_sql(value: rusqlite::types::ValueRef<'_>) -> std::result::Result<Self, FromSqlError> {
+        use rusqlite::types::FromSql;
+        Vec::<u8>::column_result(value)
+            .and_then(|bytes| {
+                crate::borsh::from_slice::<(A, B)>(&bytes)
+                    .map_err(|e| rusqlite::types::FromSqlError::Other(Box::new(e)))
+            })
+            .map_err(Into::into)
+    }
+}
+
+
+/// Implements ToSql for tuple (A, B, C)
+impl<A, B, C> crate::ToSql for (A, B, C)
+where
+    A: crate::borsh::BorshSerialize + fmt::Debug,
+    B: crate::borsh::BorshSerialize + fmt::Debug,
+    C: crate::borsh::BorshSerialize + fmt::Debug,
+{
+    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
+        match crate::borsh::to_vec(self) {
+            Ok(bytes) => Ok(ToSqlOutput::from(bytes)),
+            Err(e) => Err(rusqlite::Error::ToSqlConversionFailure(Box::new(e))),
+        }
+    }
+
+    fn sql_type(&self) -> rusqlite::types::Type {
+        rusqlite::types::Type::Blob
+    }
+}
+
+impl<A, B, C> crate::FromSql for (A, B, C)
+where
+    A: crate::borsh::BorshDeserialize,
+    B: crate::borsh::BorshDeserialize,
+    C: crate::borsh::BorshDeserialize,
+{
+    fn from_sql(value: rusqlite::types::ValueRef<'_>) -> std::result::Result<Self, FromSqlError> {
+        use rusqlite::types::FromSql;
+        Vec::<u8>::column_result(value)
+            .and_then(|bytes| {
+                crate::borsh::from_slice::<(A, B, C)>(&bytes)
+                    .map_err(|e| rusqlite::types::FromSqlError::Other(Box::new(e)))
+            })
+            .map_err(Into::into)
+    }
+}
+
 // impl FromSql for Vec<String> {
 //     fn from_sql(value: ValueRef<'_>) -> std::result::Result<Self, FromSqlError> {
 //         match value {
