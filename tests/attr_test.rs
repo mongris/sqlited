@@ -1,5 +1,8 @@
+
+
 #[cfg(test)]
 mod tests {
+    use serde::{Deserialize, Serialize};
     use rusqlite::params;
     use sqlited::{
         prelude::*,
@@ -11,6 +14,7 @@ mod tests {
 
     // 测试自增主键和非空约束
     #[table]
+    #[derive(Serialize, Deserialize)]
     struct BasicTable {
         #[autoincrement]
         id: i32,

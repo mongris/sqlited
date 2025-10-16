@@ -82,6 +82,9 @@ pub fn table(input: TokenStream) -> TokenStream {
     // 处理表级属性 (如 constraint, index)
     let table_attributes = process_table_attributes(&input.attrs);
 
+    // 保留非表相关的属性(如 derive)
+    let preserved_attrs = preserve_other_attributes(&input.attrs);
+
     // 处理字段和它们的属性
     let field_attributes = fields
         .named
@@ -95,6 +98,7 @@ pub fn table(input: TokenStream) -> TokenStream {
         &fields.named,
         &table_attributes,
         &field_attributes,
+        &preserved_attrs,
     )
 }
 
@@ -276,6 +280,9 @@ fn process_table_attributes(attrs: &[Attribute]) -> Vec<TableAttribute> {
                         emit_error!(attr.span(), "Incorrect format for the `unique_index` attribute. Expected #[unique_index(\"name\", \"columns\")]");
                     }
                 }
+            } else if attr_name == "derive" {
+                // derive 属性不需要处理，会在 preserve_other_attributes 中保留
+                continue;
             } else {
                 // Unknown attribute name, suggest a valid one if possible.
                 let suggestion = find_closest_match(&attr_name, VALID_TABLE_ATTRIBUTES);
@@ -298,6 +305,19 @@ fn process_table_attributes(attrs: &[Attribute]) -> Vec<TableAttribute> {
     }
 
     table_attrs
+}
+
+/// 保留非表相关的属性
+fn preserve_other_attributes(attrs: &[Attribute]) -> Vec<&Attribute> {
+    const TABLE_ATTRIBUTES: &[&str] = &["migration", "constraint", "index", "unique_index"];
+    
+    attrs.iter().filter(|attr| {
+        if let Some(ident) = attr.path().get_ident() {
+            !TABLE_ATTRIBUTES.contains(&ident.to_string().as_str())
+        } else {
+            true // 保留复杂路径的属性
+        }
+    }).collect()
 }
 
 /// 添加辅助函数：检查迁移参数是否完整
@@ -421,6 +441,7 @@ fn generate_table_impl(
     fields: &Punctuated<syn::Field, Comma>,
     table_attrs: &[TableAttribute],
     field_attrs: &[FieldAttribute],
+    preserved_attrs: &[&Attribute],
 ) -> TokenStream {
     // 生成表名方法
     let table_name_impl = generate_table_name(struct_name);
@@ -455,6 +476,7 @@ fn generate_table_impl(
 
     // 生成最终的实现
     quote! {
+        #(#preserved_attrs)*
         #[derive(Debug, Clone)]
         pub struct #struct_name {
             #(#field_defs),*
