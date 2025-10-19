@@ -82,6 +82,15 @@ fn process_enum_variants_for_string_style(
         .collect()
 }
 
+/// 检查枚举是否有任何变体带有 #[default] 属性
+fn has_default_attribute(variants: &syn::punctuated::Punctuated<Variant, syn::token::Comma>) -> bool {
+    variants.iter().any(|variant| {
+        variant.attrs.iter().any(|attr| {
+            attr.path().is_ident("default")
+        })
+    })
+}
+
 pub fn sql_as(attr: TokenStream, input: TokenStream) -> TokenStream {
     // 解析属性参数
     let args = parse_macro_input!(attr as SqlAsArgs);
@@ -312,6 +321,9 @@ pub fn sql_as(attr: TokenStream, input: TokenStream) -> TokenStream {
             // 获取枚举变体
             let variants = &data_enum.variants;
 
+            // 检查是否有 #[default] 属性
+            let has_custom_default = has_default_attribute(variants);
+
             // 重建枚举变体，保留原始属性
             let variant_definitions = variants.iter().map(|v| {
                 let name = &v.ident;
@@ -374,15 +386,27 @@ pub fn sql_as(attr: TokenStream, input: TokenStream) -> TokenStream {
                 .filter(|attr| !attr.path().is_ident("sql_as"))
                 .collect::<Vec<_>>();
 
-            // 根据 style_str 选择派生的 traits
+            // 根据 style_str 和是否有自定义 default 选择派生的 traits
             let derive_traits_for_enum = if style_str == "borsh" {
-                 // 对于 borsh 枚举，Default 可能需要手动实现或根据具体情况决定
-                quote! { #[derive(Default, Clone, Debug, PartialEq, sqlited::borsh::BorshSerialize, sqlited::borsh::BorshDeserialize)] }
+                if has_custom_default {
+                    // 用户提供了 #[default]，包含 Default
+                    quote! { #[derive(Default, Clone, Debug, PartialEq, sqlited::borsh::BorshSerialize, sqlited::borsh::BorshDeserialize)] }
+                } else {
+                    // 没有 #[default]，不派生 Default
+                    quote! { #[derive(Clone, Debug, PartialEq, sqlited::borsh::BorshSerialize, sqlited::borsh::BorshDeserialize)] }
+                }
             } else if style_str == "string" || style_str == "int" {
-                // string 和 int 风格的枚举通常是 C-like，可以安全地派生 Default, Serialize, Deserialize
-                quote! { #[derive(Default, Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)] }
+                if has_custom_default {
+                    quote! { #[derive(Default, Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)] }
+                } else {
+                    quote! { #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)] }
+                }
             } else { // json, jsonb, binary
-                quote! { #[derive(Default, Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)] }
+                if has_custom_default {
+                    quote! { #[derive(Default, Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)] }
+                } else {
+                    quote! { #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)] }
+                }
             };
 
             // 特别处理 "string" 风格的枚举
