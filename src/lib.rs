@@ -179,6 +179,16 @@ impl ToSql for bool {
     }
 }
 
+impl ToSql for usize {
+    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
+        Ok(ToSqlOutput::from(*self as i64))
+    }
+
+    fn sql_type(&self) -> rusqlite::types::Type {
+        rusqlite::types::Type::Integer
+    }
+}
+
 impl ToSql for i8 {
     fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
         Ok(ToSqlOutput::from(*self as i64))
@@ -468,6 +478,20 @@ impl FromSql for bool {
     fn from_sql(value: ValueRef<'_>) -> std::result::Result<Self, FromSqlError> {
         match value {
             ValueRef::Integer(i) => Ok(i != 0),
+            _ => Err(FromSqlError::InvalidType(format!(
+                "Expected INTEGER, got {:?}",
+                value
+            ))),
+        }
+    }
+}
+
+impl FromSql for usize {
+    fn from_sql(value: ValueRef<'_>) -> std::result::Result<Self, FromSqlError> {
+        match value {
+            ValueRef::Integer(i) => i.try_into().map_err(|_| {
+                FromSqlError::InvalidType(format!("Integer value {} out of range for usize", i))
+            }),
             _ => Err(FromSqlError::InvalidType(format!(
                 "Expected INTEGER, got {:?}",
                 value

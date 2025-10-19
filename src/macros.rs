@@ -1401,10 +1401,20 @@ macro_rules! define_db {
                 Ok(conn.last_insert_rowid()) // Wrap in Ok as get_conn can fail
             }
 
-            // ... other direct connection methods if needed ...
-
             pub fn raw_pool(&self) -> &std::sync::Arc<$crate::pool::ConnectionPool> {
                 &self.pool
+            }
+
+            pub fn vacumm(&self) -> $crate::error::Result<()> {
+                let conn = self.get_conn()?;
+                conn.execute("VACUUM", [])?;
+                Ok(())
+            }
+
+            pub fn analyze(&self) -> $crate::error::Result<()> {
+                let conn = self.get_conn()?;
+                conn.execute("ANALYZE", [])?;
+                Ok(())
             }
 
             // 获取表的所有迁移
