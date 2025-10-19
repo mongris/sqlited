@@ -145,6 +145,16 @@ impl SqliteTypeName for u16 {
     }
 }
 
+impl SqliteTypeName for usize {
+    fn sql_type_name() -> &'static str {
+        "INTEGER"
+    }
+    
+    fn is_integer_type() -> bool {
+        true
+    }
+}
+
 impl SqliteTypeName for u32 {
     fn sql_type_name() -> &'static str {
         "INTEGER"
