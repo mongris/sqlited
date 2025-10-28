@@ -96,6 +96,7 @@ mod tests {
         }
 
         query! {
+            /// 获取用户名称
             fn get_user_name(id: i32) -> Result<String> {
                 SELECT name FROM User WHERE id = ?1
             }

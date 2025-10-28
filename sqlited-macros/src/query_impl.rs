@@ -2,12 +2,13 @@ use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{ToTokens, quote};
 use syn::{
-    parse::{Parse, ParseStream}, parse_macro_input, punctuated::Punctuated, spanned::Spanned, token::Comma, FnArg, GenericArgument, Ident, LitStr, Result as SynResult, ReturnType, Token, Type, Visibility
+    Attribute, FnArg, GenericArgument, Ident, Result as SynResult, ReturnType, Token, Type, Visibility, parse::{Parse, ParseStream}, parse_macro_input, punctuated::Punctuated, token::Comma
 };
 
 // Query macro input parse structure
 #[allow(dead_code)]
 struct QueryInput {
+    attrs: Vec<Attribute>,
     visibility: Visibility,
     fn_token: Token![fn],
     name: Ident,
@@ -20,6 +21,7 @@ struct QueryInput {
 
 impl Parse for QueryInput {
     fn parse(input: ParseStream) -> SynResult<Self> {
+        let attrs = input.call(syn::Attribute::parse_outer)?; 
         let visibility = input.parse()?;
         let fn_token = input.parse()?;
         let name = input.parse()?;
@@ -36,6 +38,7 @@ impl Parse for QueryInput {
         let query: TokenStream2 = body_content.parse()?;
 
         Ok(QueryInput {
+            attrs,
             visibility,
             fn_token,
             name,
@@ -52,6 +55,7 @@ impl Parse for QueryInput {
 pub fn query_macro(input: TokenStream) -> TokenStream {
     let parsed_input = parse_macro_input!(input as QueryInput);
 
+    let attrs = &parsed_input.attrs;
     let visibility = &parsed_input.visibility;
     let fn_name = &parsed_input.name;
     let args = &parsed_input.args;
@@ -100,6 +104,7 @@ let method_params_with_types = generate_method_params_with_types(args);
 
     let generated_code = if is_unit {
         quote! {
+            #(#attrs)*
             #visibility fn #fn_name<'s_self>(self: &'s_self Self, #method_params_with_types) -> sqlited::Result<()> {
                 #params_holder_construction
                 let query = sqlited::sql_str!(#query_str);
@@ -112,6 +117,7 @@ let method_params_with_types = generate_method_params_with_types(args);
             let tuple_elements = extract_tuple_elements(&model_type);
             let indices = (0..tuple_elements.len()).map(syn::Index::from);
             quote! {
+                #(#attrs)*
                 #visibility fn #fn_name<'s_self>(self: &'s_self Self, #method_params_with_types) -> sqlited::Result<Vec<#model_type>> {
                     #params_holder_construction
                     let query = sqlited::sql_str!(#query_str);
@@ -124,6 +130,7 @@ let method_params_with_types = generate_method_params_with_types(args);
             }
         } else if is_primitive_type(&model_type) {
             quote! {
+                #(#attrs)*
                 #visibility fn #fn_name<'s_self>(self: &'s_self Self, #method_params_with_types) -> sqlited::Result<Vec<#model_type>> {
                     #params_holder_construction
                     let query = sqlited::sql_str!(#query_str);
@@ -132,6 +139,7 @@ let method_params_with_types = generate_method_params_with_types(args);
             }
         } else { // Collection of structs
             quote! {
+                #(#attrs)*
                 #visibility fn #fn_name<'s_self>(self: &'s_self Self, #method_params_with_types) -> sqlited::Result<Vec<#model_type>> {
                     #params_holder_construction
                     let query = sqlited::sql_str!(#query_str);
@@ -144,6 +152,7 @@ let method_params_with_types = generate_method_params_with_types(args);
             let tuple_elements = extract_tuple_elements(&model_type);
             let indices = (0..tuple_elements.len()).map(syn::Index::from);
             quote! {
+                #(#attrs)*
                 #visibility fn #fn_name<'s_self>(self: &'s_self Self, #method_params_with_types) -> sqlited::Result<#model_type> {
                     #params_holder_construction
                     let query = sqlited::sql_str!(#query_str);
@@ -156,6 +165,7 @@ let method_params_with_types = generate_method_params_with_types(args);
             }
         } else if is_primitive_type(&model_type) {
             quote! {
+                #(#attrs)*
                 #visibility fn #fn_name<'s_self>(self: &'s_self Self, #method_params_with_types) -> sqlited::Result<#model_type> {
                     #params_holder_construction
                     let query = sqlited::sql_str!(#query_str);
@@ -164,6 +174,7 @@ let method_params_with_types = generate_method_params_with_types(args);
             }
         } else { // Single struct
             quote! {
+                #(#attrs)*
                 #visibility fn #fn_name<'s_self>(self: &'s_self Self, #method_params_with_types) -> sqlited::Result<#model_type> {
                     #params_holder_construction
                     let query = sqlited::sql_str!(#query_str);
